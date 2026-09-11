@@ -20,8 +20,9 @@ TRAE SOLO CN 每日签到脚本
 
 注意：CLIProxyAPI OAuth 当前保存的是随机 hex32 device_id，不是 Trae AHA Device
 SDK 注册产生的数值型 remote DID。实测 status 会接受该随机 ID，但 claim 对未签到账号
-返回 9074；换成 AHA 注册 DID 后立即成功并生成签到权益包。因此执行 claim 时应使用
---device-id、TRAE_DEVICE_ID，或 --trae-data-dir 自动提取真实 AHA DID。
+返回 9074；换成任意数值型 DID（真实 AHA DID 或新生成的数值 ID）后立即成功并生成
+签到权益包。脚本默认会把非数值型 device_id 换成随机数值 ID 后重试，也可用 --device-id、
+TRAE_DEVICE_ID，或 --trae-data-dir 显式指定真实 AHA DID。
 
 登录态来源（自动读取，也可手动传入）:
   CLIProxyAPI 凭证目录:  ~/.cli-proxy-api/auths/trae-<uid>.json
@@ -49,11 +50,14 @@ SDK 注册产生的数值型 remote DID。实测 status 会接受该随机 ID，
   uv run trae_checkin.py --retry 3 --retry-delay 30       # 遇排队错误自动重试
 
 业务错误码（实测）:
-  code 0                      签到成功
+  code 0                      签到成功（仍需用当日权益包确认到账）
   9074 「当前参与用户太多，请稍后再试」
-       未签到账号使用随机 hex32 device_id 时稳定返回；改用 AHA 数值 DID 后成功。
+       未签到账号使用随机 hex32 device_id 时稳定返回；改用任意数值型 DID 后成功。
+       可重试，且重试时会自动把非数值型 DID 换成数值型。
   9090 「活动暂不可用」  activity/action 通道返回，说明该奖励不走此通道。
-  9095                    当前设备今日已经签到，请明日再来哦～（幂等成功）。
+  9095 「当前设备今日已经签到」
+       不可当作成功：实测该码返回时 status.checked_in 仍为 false 且当日权益包未生成
+       （同一台机器的 DID 已为另一个账号签过到）。脚本会改用当日权益包核实。
   1001                    认证失败，不是“已签到”。
 """
 
@@ -64,6 +68,7 @@ import base64
 import json
 import os
 import re
+import secrets
 import sys
 import time
 from datetime import datetime, timedelta, timezone
@@ -88,13 +93,18 @@ EP_USAGE = "/trae/api/v2/pay/ide_user_ent_usage"
 
 # 业务错误码语义（实测）
 #   9074: "当前参与用户太多，请稍后再试"
-#         Live verification showed this for an unregistered hex32 device ID;
-#         replacing it with an AHA numeric remote DID completed the claim.
+#         Live verification: an unclaimed account failed 6/6 with a hex32
+#         device ID and succeeded immediately with any numeric DID (the real
+#         AHA remote DID or a freshly generated numeric one). Retryable, and
+#         the retry path swaps a non-numeric DID for a numeric one.
 #   9090: "活动暂不可用"（activity/action 通道返回）
 #         该 activity_id 不走通用活动通道，或参数不匹配。
 RETRYABLE_CODES = frozenset({9074})
-# Idempotent already-checked-in response confirmed against the live endpoint.
-ALREADY_CODES = frozenset({9095})
+# 9095 ("当前设备今日已经签到") is NOT proof of success: live testing returned
+# it while status.checked_in stayed false and no same-day entitlement pack was
+# granted -- the DID had already claimed for another account on this machine.
+# Such codes are verified against the same-day pack instead of being trusted.
+ACCEPTED_CODES = frozenset({9095})
 
 # CLIProxyAPI 默认 auth 目录
 AUTH_REL_PATH = (".cli-proxy-api", "auths")
@@ -113,6 +123,17 @@ AHA_LOG_DEVICE_PATTERNS = (
     re.compile(r"\[ICDRS\].*initialization done, did:\s*([0-9]{12,20})"),
     re.compile(r"RegisterDevice success.*device_id:\s*([0-9]{12,20})"),
 )
+
+def random_numeric_did() -> str:
+    """生成一个 16 位数值型 device_id。
+
+    claim 接口对未签到账号普遍拒绝随机 hex32，却接受任意数值型 DID（实测包括
+    服务端从未见过的 ID），因此重试时用它替换 hex32，而不需要真实 AHA DID。
+    第一位固定为非 0，保持 16 位定长。
+    """
+    return str(secrets.randbelow(9) + 1) + "".join(
+        str(secrets.randbelow(10)) for _ in range(15)
+    )
 
 
 def _decode_jwt_uid(token: str) -> str | None:
@@ -444,15 +465,16 @@ def _run_one(args: argparse.Namespace, session: dict, ug_host: str) -> int:
         return 0
 
     device_id = str(session.get("device_id") or "")
-    if not AHA_REMOTE_DEVICE_ID_PATTERN.fullmatch(device_id):
+    numeric_did = bool(AHA_REMOTE_DEVICE_ID_PATTERN.fullmatch(device_id))
+    if not numeric_did:
+        # Not a hard stop: the claim endpoint accepts any numeric DID, including
+        # one it has never seen, so the retry path below swaps this value out.
         print(
-            "\n[✗] 当前凭证中的 device_id 不是 AHA 注册的数值型 DID：\n"
+            "\n[!] 当前 device_id 不是数值型 DID：\n"
             f"    {device_id or '<empty>'}\n"
-            "    CLIProxyAPI OAuth 当前生成的是随机 hex32，签到写接口可能返回 9074。\n"
-            "    请用 --device-id <AHA数值ID>，或用 --trae-data-dir 指向 Trae 用户目录，\n"
-            "    脚本会从 logs/*/main.log 自动提取 ICDRS remote device ID。"
+            "    CLIProxyAPI OAuth 生成的是随机 hex32；claim 对这类值容易返回 9074。\n"
+            "    将先在重试时改为随机数值 DID；也可用 --device-id / --trae-data-dir 指定真实 AHA DID。"
         )
-        return 4
 
     print("\n[i] 执行签到...")
     attempts = max(1, getattr(args, "retry", 1))
@@ -474,30 +496,71 @@ def _run_one(args: argparse.Namespace, session: dict, ug_host: str) -> int:
 
         if ccode in (None, 0):
             print("\n[i] claim 已受理，正在验证签到状态...")
-            if not _verify_checkin(ug_host, session, args.timeout):
-                print(
-                    "[!] claim 返回 code 0，但 status 和今日签到权益包均未确认到账。\n"
-                    "    本次只能判定为请求已受理，不能判定签到成功。"
-                )
-                return 2
-            print("[✓] 签到成功，服务端状态/权益包已确认。")
-            granted = cpayload.get("credits")
-            if granted is None and isinstance(cpayload.get("data"), dict):
-                granted = cpayload["data"].get("credits")
-            if granted is not None:
-                print(f"[✓] 获得积分: {granted}")
-            if args.usage:
-                _print_usage(ug_host, session, args.timeout)
-            return 0
+            if _verify_checkin(ug_host, session, args.timeout):
+                print("[✓] 签到成功，服务端状态/权益包已确认。")
+                granted = cpayload.get("credits")
+                if granted is None and isinstance(cpayload.get("data"), dict):
+                    granted = cpayload["data"].get("credits")
+                if granted is not None:
+                    print(f"[✓] 获得积分: {granted}")
+                if args.usage:
+                    _print_usage(ug_host, session, args.timeout)
+                return 0
+            print(
+                "[!] claim 返回 code 0，但 status 和今日签到权益包均未确认到账。\n"
+                "    本次只能判定为请求已受理，不能判定签到成功。"
+            )
+            if attempt < attempts:
+                new_did = random_numeric_did()
+                print(f"[!] 第 {attempt}/{attempts} 次：改用数值 DID {new_did}；{delay}s 后重试...")
+                session["device_id"] = new_did
+                numeric_did = True
+                time.sleep(delay)
+                continue
+            return 2
 
-        if ccode in ALREADY_CODES:
-            print(f"\n[✓] 已签到（业务错误码 {ccode}: {cpayload.get('message', '')}）")
-            if args.usage:
-                _print_usage(ug_host, session, args.timeout)
-            return 0
+        if ccode in ACCEPTED_CODES:
+            # 9095 says "this device already checked in today", but live testing
+            # saw it while checked_in stayed false and no pack was granted (the
+            # DID had claimed for a different account on the same machine).
+            # Only the same-day entitlement pack proves it actually landed.
+            print(
+                f"\n[i] 服务端返回 {ccode}: {cpayload.get('message', '')}\n"
+                "    正在用当日权益包核实是否真的到账..."
+            )
+            if _has_today_checkin_pack(
+                fetch_usage(ug_host, session, args.timeout).get("payload") or {}, str(session.get("uid") or "")
+            ):
+                print("[✓] 当日签到权益包已到账。")
+                if args.usage:
+                    _print_usage(ug_host, session, args.timeout)
+                return 0
+            print(
+                f"[!] 业务错误码 {ccode} 但当日权益包未生成；不能判定签到成功。\n"
+                "    常见原因：同一台机器的 DID 今日已为另一个账号签到。"
+            )
+            if attempt < attempts:
+                new_did = random_numeric_did()
+                print(
+                    f"[!] 第 {attempt}/{attempts} 次：改用数值 DID {new_did}；{delay}s 后重试..."
+                )
+                session["device_id"] = new_did
+                numeric_did = True
+                time.sleep(delay)
+                continue
+            return 2
 
         if ccode in RETRYABLE_CODES and attempt < attempts:
-            print(f"[!] 第 {attempt}/{attempts} 次: {ccode_msg(ccode)}；{delay}s 后重试...")
+            if not numeric_did:
+                new_did = random_numeric_did()
+                session["device_id"] = new_did
+                numeric_did = True
+                print(
+                    f"[!] 第 {attempt}/{attempts} 次: {ccode_msg(ccode)}；"
+                    f"改用数值 DID {new_did}，{delay}s 后重试..."
+                )
+            else:
+                print(f"[!] 第 {attempt}/{attempts} 次: {ccode_msg(ccode)}；{delay}s 后重试...")
             time.sleep(delay)
             continue
 
@@ -507,8 +570,8 @@ def _run_one(args: argparse.Namespace, session: dict, ug_host: str) -> int:
         print(
             f"\n[!] 签到未成功：{ccode_msg(ccode)}\n"
             "[i] 说明：未签到账号使用随机 hex32 device_id 时会被软拒绝。\n"
-            "    请提供 Trae AHA Device SDK 注册得到的数值型 remote DID，\n"
-            "    或通过 --trae-data-dir / TRAE_DEVICE_ID 自动或显式指定。"
+            "    脚本已自动改用数值 DID 重试；可用 --retry 提高尝试次数，\n"
+            "    或用 --trae-data-dir / TRAE_DEVICE_ID 指定真实 AHA DID。"
         )
         return 2
 
@@ -522,7 +585,15 @@ def _print_usage(ug_host: str, session: dict, timeout: int) -> None:
     upayload = ur.get("payload") if isinstance(ur.get("payload"), dict) else {}
     if ur["status"] == 200 and _biz_code(upayload) in (None, 0):
         data = upayload.get("data") if isinstance(upayload.get("data"), dict) else upayload
-        printed = False
+        summary = data.get("usage_summary")
+        if isinstance(summary, dict):
+            total = summary.get("total_amount")
+            consumed = summary.get("consumed_amount")
+            print(f"[i] total_amount: {total}")
+            print(f"[i] consumed_amount: {consumed}")
+            if isinstance(total, (int, float)) and isinstance(consumed, (int, float)):
+                print(f"[i] 剩余积分: {round(total - consumed, 2)}")
+        printed = isinstance(summary, dict)
         for key in ("total_credits", "used_credits", "remain_credits", "credits"):
             if key in data:
                 print(f"[i] {key}: {data[key]}")
@@ -639,8 +710,8 @@ def main() -> int:
     ap.add_argument(
         "--retry",
         type=int,
-        default=1,
-        help="遇到可重试错误（如 9074 排队）时的尝试次数（默认 1，即不重试）",
+        default=3,
+        help="签到尝试次数；9074 排队会自动改用数值 DID 重试（默认 3）",
     )
     ap.add_argument("--retry-delay", type=int, default=5, help="重试间隔秒数（默认 5）")
     ap.add_argument("--verbose", action="store_true", help="打印每次重试的原始响应")
