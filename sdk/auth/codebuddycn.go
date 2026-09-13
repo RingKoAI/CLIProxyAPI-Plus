@@ -15,6 +15,32 @@ import (
 
 var codeBuddyCNRefreshLead = 5 * time.Minute
 
+// codeBuddyAuthSpec parameterizes the CodeBuddy browser-polling authenticator so
+// the CN and international gateways share identical login logic.
+type codeBuddyAuthSpec struct {
+	provider    string
+	label       string
+	fileNamePre string
+	baseURL     string
+	newClient   func(cfg *config.Config) *codebuddycn.Client
+}
+
+var codeBuddyCNAuthSpec = codeBuddyAuthSpec{
+	provider:    "codebuddy-cn",
+	label:       "CodeBuddy CN",
+	fileNamePre: "codebuddy-cn",
+	baseURL:     codebuddycn.APIBaseURL,
+	newClient:   codebuddycn.NewClient,
+}
+
+var codeBuddyAIAuthSpec = codeBuddyAuthSpec{
+	provider:    "codebuddy-ai",
+	label:       "CodeBuddy AI",
+	fileNamePre: "codebuddy-ai",
+	baseURL:     codebuddycn.AIBaseURL,
+	newClient:   codebuddycn.NewAIClient,
+}
+
 // CodeBuddyCNAuthenticator implements CodeBuddy CN's browser polling flow.
 type CodeBuddyCNAuthenticator struct{}
 
@@ -29,6 +55,29 @@ func (CodeBuddyCNAuthenticator) RefreshLead() *time.Duration { return &codeBuddy
 
 // Login starts browser authorization and waits for CodeBuddy to issue tokens.
 func (a CodeBuddyCNAuthenticator) Login(ctx context.Context, cfg *config.Config, opts *LoginOptions) (*coreauth.Auth, error) {
+	return codeBuddyLogin(ctx, cfg, opts, codeBuddyCNAuthSpec)
+}
+
+// CodeBuddyAIAuthenticator implements the international CodeBuddy AI browser
+// polling flow. The protocol is identical to CodeBuddy CN; only the gateway host
+// and the account's authentication domain differ.
+type CodeBuddyAIAuthenticator struct{}
+
+// NewCodeBuddyAIAuthenticator constructs a CodeBuddy AI authenticator.
+func NewCodeBuddyAIAuthenticator() Authenticator { return &CodeBuddyAIAuthenticator{} }
+
+// Provider returns the CodeBuddy AI provider key.
+func (CodeBuddyAIAuthenticator) Provider() string { return "codebuddy-ai" }
+
+// RefreshLead instructs the runtime to refresh shortly before expiry.
+func (CodeBuddyAIAuthenticator) RefreshLead() *time.Duration { return &codeBuddyCNRefreshLead }
+
+// Login starts browser authorization and waits for CodeBuddy AI to issue tokens.
+func (a CodeBuddyAIAuthenticator) Login(ctx context.Context, cfg *config.Config, opts *LoginOptions) (*coreauth.Auth, error) {
+	return codeBuddyLogin(ctx, cfg, opts, codeBuddyAIAuthSpec)
+}
+
+func codeBuddyLogin(ctx context.Context, cfg *config.Config, opts *LoginOptions, spec codeBuddyAuthSpec) (*coreauth.Auth, error) {
 	if cfg == nil {
 		return nil, fmt.Errorf("cliproxy auth: configuration is required")
 	}
@@ -38,8 +87,8 @@ func (a CodeBuddyCNAuthenticator) Login(ctx context.Context, cfg *config.Config,
 	if opts == nil {
 		opts = &LoginOptions{}
 	}
-	client := codebuddycn.NewClient(cfg)
-	fmt.Println("Starting CodeBuddy CN authentication...")
+	client := spec.newClient(cfg)
+	fmt.Printf("Starting %s authentication...\n", spec.label)
 	device, err := client.StartDeviceFlow(ctx)
 	if err != nil {
 		return nil, err
@@ -57,30 +106,30 @@ func (a CodeBuddyCNAuthenticator) Login(ctx context.Context, cfg *config.Config,
 	if err != nil {
 		return nil, err
 	}
-	fileName := fmt.Sprintf("codebuddy-cn-%d.json", time.Now().UnixMilli())
-	metadata := tokenMetadata(token)
+	fileName := fmt.Sprintf("%s-%d.json", spec.fileNamePre, time.Now().UnixMilli())
+	metadata := tokenMetadata(token, spec)
 	return &coreauth.Auth{
 		ID:       fileName,
-		Provider: a.Provider(),
+		Provider: spec.provider,
 		FileName: fileName,
-		Label:    "CodeBuddy CN",
+		Label:    spec.label,
 		Metadata: metadata,
 		Attributes: map[string]string{
 			coreauth.AttributeAuthKind: coreauth.AuthKindOAuth,
-			"base_url":                 codebuddycn.APIBaseURL,
+			"base_url":                 spec.baseURL,
 		},
 	}, nil
 }
 
-func tokenMetadata(token *codebuddycn.TokenData) map[string]any {
+func tokenMetadata(token *codebuddycn.TokenData, spec codeBuddyAuthSpec) map[string]any {
 	metadata := map[string]any{
-		"type":          "codebuddy-cn",
+		"type":          spec.provider,
 		"auth_kind":     "oauth",
 		"access_token":  token.AccessToken,
 		"refresh_token": token.RefreshToken,
 		"token_type":    token.TokenType,
 		"expires_in":    token.ExpiresIn,
-		"base_url":      codebuddycn.APIBaseURL,
+		"base_url":      spec.baseURL,
 		"timestamp":     time.Now().UnixMilli(),
 	}
 	if !token.ExpiresAt.IsZero() {

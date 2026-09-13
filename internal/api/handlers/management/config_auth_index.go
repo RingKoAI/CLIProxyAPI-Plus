@@ -256,7 +256,7 @@ func (h *Handler) xaiKeysWithAuthIndex() []xaiKeyWithAuthIndex {
 	return out
 }
 
-func (h *Handler) codeBuddyCNKeysWithAuthIndex() []codeBuddyCNKeyWithAuthIndex {
+func (h *Handler) codeBuddyKeysWithAuthIndex(spec codeBuddyKeyListSpec) []codeBuddyCNKeyWithAuthIndex {
 	if h == nil {
 		return nil
 	}
@@ -268,13 +268,14 @@ func (h *Handler) codeBuddyCNKeysWithAuthIndex() []codeBuddyCNKeyWithAuthIndex {
 		return nil
 	}
 
+	entries := spec.get(h.cfg)
 	idGen := synthesizer.NewStableIDGenerator()
-	out := make([]codeBuddyCNKeyWithAuthIndex, len(h.cfg.CodeBuddyCNKey))
-	for i := range h.cfg.CodeBuddyCNKey {
-		entry := h.cfg.CodeBuddyCNKey[i]
+	out := make([]codeBuddyCNKeyWithAuthIndex, len(entries))
+	for i := range entries {
+		entry := entries[i]
 		authIndex := ""
 		if key := strings.TrimSpace(entry.APIKey); key != "" {
-			id, _ := idGen.Next("codebuddy-cn:apikey", key, entry.BaseURL)
+			id, _ := idGen.Next(spec.authIndexKey, key, entry.BaseURL)
 			authIndex = liveIndexByID[id]
 		}
 		out[i] = codeBuddyCNKeyWithAuthIndex{

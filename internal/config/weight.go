@@ -31,7 +31,7 @@ func validateCredentialWeightYAML(data []byte) error {
 	families := map[string]struct{}{
 		"gemini-api-key": {}, "interactions-api-key": {}, "claude-api-key": {},
 		"vertex-api-key": {}, "codex-api-key": {}, "xai-api-key": {},
-		"deepseek-web-api-key": {},
+		"deepseek-web-api-key": {}, "codebuddy-cn-api-key": {}, "codebuddy-ai-api-key": {},
 	}
 	for index := 0; root != nil && root.Kind == yaml.MappingNode && index+1 < len(root.Content); index += 2 {
 		name := root.Content[index].Value
@@ -145,6 +145,16 @@ func (cfg *Config) ValidateCredentialWeights() error {
 	for index := range cfg.DeepSeekWebKey {
 		if errValidate := ValidateCredentialWeight(cfg.DeepSeekWebKey[index].Weight); errValidate != nil {
 			return fmt.Errorf("deepseek-web-api-key[%d].weight: %w", index, errValidate)
+		}
+	}
+	for index := range cfg.CodeBuddyCNKey {
+		if errValidate := ValidateCredentialWeight(cfg.CodeBuddyCNKey[index].Weight); errValidate != nil {
+			return fmt.Errorf("codebuddy-cn-api-key[%d].weight: %w", index, errValidate)
+		}
+	}
+	for index := range cfg.CodeBuddyAIKey {
+		if errValidate := ValidateCredentialWeight(cfg.CodeBuddyAIKey[index].Weight); errValidate != nil {
+			return fmt.Errorf("codebuddy-ai-api-key[%d].weight: %w", index, errValidate)
 		}
 	}
 	for providerIndex := range cfg.OpenAICompatibility {

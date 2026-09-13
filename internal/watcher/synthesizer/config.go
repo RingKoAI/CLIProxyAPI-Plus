@@ -22,6 +22,12 @@ type ConfigSynthesizer struct{}
 // https://copilot.tencent.com/v2/chat/completions.
 const codeBuddyCNDefaultBaseURL = "https://copilot.tencent.com/v2"
 
+// codeBuddyAIDefaultBaseURL is the international CodeBuddy AI OpenAI-compatible
+// gateway host prefix used when a codebuddy-ai-api-key entry does not specify its
+// own base-url. The executor appends "/chat/completions", yielding
+// https://www.codebuddy.ai/v2/chat/completions.
+const codeBuddyAIDefaultBaseURL = "https://www.codebuddy.ai/v2"
+
 const deepSeekWebDefaultBaseURL = "https://chat.deepseek.com"
 
 // traeDefaultBaseURL is the TRAE SOLO CN desktop agent gateway used when a
@@ -70,6 +76,8 @@ func (s *ConfigSynthesizer) Synthesize(ctx *SynthesisContext) ([]*coreauth.Auth,
 	out = append(out, s.synthesizeXAIKeys(ctx)...)
 	// CodeBuddy CN API Keys
 	out = append(out, s.synthesizeCodeBuddyCNKeys(ctx)...)
+	// CodeBuddy AI (international) API Keys
+	out = append(out, s.synthesizeCodeBuddyAIKeys(ctx)...)
 	// DeepSeek Web userTokens
 	out = append(out, s.synthesizeDeepSeekWebKeys(ctx)...)
 	// TRAE SOLO CN desktop credentials
@@ -233,22 +241,58 @@ func (s *ConfigSynthesizer) synthesizeXAIKeys(ctx *SynthesisContext) []*coreauth
 
 // synthesizeCodeBuddyCNKeys creates Auth entries for CodeBuddy CN (Tencent) API keys.
 func (s *ConfigSynthesizer) synthesizeCodeBuddyCNKeys(ctx *SynthesisContext) []*coreauth.Auth {
+	return synthesizeCodeBuddyStyleKeys(ctx, ctx.Config.CodeBuddyCNKey, codeBuddyStyleKeySpec{
+		idKind:      "codebuddy-cn:apikey",
+		sourceName:  "codebuddy-cn",
+		provider:    constant.CodeBuddyCN,
+		label:       "codebuddy-cn-apikey",
+		defaultBase: codeBuddyCNDefaultBaseURL,
+		hash:        diff.ComputeCodeBuddyCNModelsHash,
+	})
+}
+
+// synthesizeCodeBuddyAIKeys creates Auth entries for CodeBuddy AI (international) API keys.
+func (s *ConfigSynthesizer) synthesizeCodeBuddyAIKeys(ctx *SynthesisContext) []*coreauth.Auth {
+	return synthesizeCodeBuddyStyleKeys(ctx, ctx.Config.CodeBuddyAIKey, codeBuddyStyleKeySpec{
+		idKind:      "codebuddy-ai:apikey",
+		sourceName:  "codebuddy-ai",
+		provider:    constant.CodeBuddyAI,
+		label:       "codebuddy-ai-apikey",
+		defaultBase: codeBuddyAIDefaultBaseURL,
+		hash:        diff.ComputeCodeBuddyAIModelsHash,
+	})
+}
+
+// codeBuddyStyleKeySpec parameterizes the CodeBuddy-style API-key synthesizer so
+// the CN and international gateways share identical auth-entry construction.
+type codeBuddyStyleKeySpec struct {
+	idKind      string
+	sourceName  string
+	provider    string
+	label       string
+	defaultBase string
+	hash        func(models []config.CodeBuddyCNModel) string
+}
+
+// synthesizeCodeBuddyStyleKeys creates Auth entries for CodeBuddy-style API keys
+// (CodeBuddy CN and CodeBuddy AI share the same OpenAI-compatible entry shape).
+func synthesizeCodeBuddyStyleKeys(ctx *SynthesisContext, entries []config.CodeBuddyCNKey, spec codeBuddyStyleKeySpec) []*coreauth.Auth {
 	cfg := ctx.Config
 	now := ctx.Now
 	idGen := ctx.IDGenerator
 
-	out := make([]*coreauth.Auth, 0, len(cfg.CodeBuddyCNKey))
-	for i := range cfg.CodeBuddyCNKey {
-		entry := cfg.CodeBuddyCNKey[i]
+	out := make([]*coreauth.Auth, 0, len(entries))
+	for i := range entries {
+		entry := entries[i]
 		key := strings.TrimSpace(entry.APIKey)
 		if key == "" {
 			continue
 		}
 		prefix := strings.TrimSpace(entry.Prefix)
 		baseURL := strings.TrimSpace(entry.BaseURL)
-		id, token := idGen.Next("codebuddy-cn:apikey", key, baseURL)
+		id, token := idGen.Next(spec.idKind, key, baseURL)
 		attrs := map[string]string{
-			"source":       fmt.Sprintf("config:codebuddy-cn[%s]", token),
+			"source":       fmt.Sprintf("config:%s[%s]", spec.sourceName, token),
 			"api_key":      key,
 			"config_index": strconv.Itoa(i),
 		}
@@ -263,16 +307,18 @@ func (s *ConfigSynthesizer) synthesizeCodeBuddyCNKeys(ctx *SynthesisContext) []*
 		if baseURL != "" {
 			attrs["base_url"] = baseURL
 		} else {
-			attrs["base_url"] = codeBuddyCNDefaultBaseURL
+			attrs["base_url"] = spec.defaultBase
 		}
-		if hash := diff.ComputeCodeBuddyCNModelsHash(entry.Models); hash != "" {
-			attrs["models_hash"] = hash
+		if spec.hash != nil {
+			if hash := spec.hash(entry.Models); hash != "" {
+				attrs["models_hash"] = hash
+			}
 		}
 		addConfigHeadersToAttrs(entry.Headers, attrs)
 		a := &coreauth.Auth{
 			ID:         id,
-			Provider:   constant.CodeBuddyCN,
-			Label:      "codebuddy-cn-apikey",
+			Provider:   spec.provider,
+			Label:      spec.label,
 			Prefix:     prefix,
 			Status:     coreauth.StatusActive,
 			ProxyURL:   strings.TrimSpace(entry.ProxyURL),

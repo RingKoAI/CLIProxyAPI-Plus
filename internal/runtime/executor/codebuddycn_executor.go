@@ -27,6 +27,38 @@ import (
 // synthesized auth attributes; this constant documents the canonical endpoint.
 const CodeBuddyCNBaseURL = "https://copilot.tencent.com/v2/chat/completions"
 
+// codeBuddyAuthDefaults describes the credentials, headers, and branding of one
+// CodeBuddy gateway. CodeBuddy CN and the international CodeBuddy AI build share
+// the same OpenAI-compatible protocol; only these values differ.
+type codeBuddyAuthDefaults struct {
+	// provider is the internal provider identifier (constant.CodeBuddyCN / constant.CodeBuddyAI).
+	provider string
+	// apiBaseURL is the default OpenAI-compatible base URL (without /chat/completions).
+	apiBaseURL string
+	// errorPrefix labels executor errors for the specific gateway.
+	errorPrefix string
+	// newAuthClient builds an OAuth client for this gateway.
+	newAuthClient func(cfg *config.Config, proxyURL string) *codebuddyauth.Client
+}
+
+var codeBuddyCNAuthDefaults = codeBuddyAuthDefaults{
+	provider:    constant.CodeBuddyCN,
+	apiBaseURL:  codebuddyauth.APIBaseURL,
+	errorPrefix: "codebuddy-cn executor",
+	newAuthClient: func(cfg *config.Config, proxyURL string) *codebuddyauth.Client {
+		return codebuddyauth.NewClientWithProxyURL(cfg, proxyURL)
+	},
+}
+
+var codeBuddyAIAuthDefaults = codeBuddyAuthDefaults{
+	provider:    constant.CodeBuddyAI,
+	apiBaseURL:  codebuddyauth.AIBaseURL,
+	errorPrefix: "codebuddy-ai executor",
+	newAuthClient: func(cfg *config.Config, proxyURL string) *codebuddyauth.Client {
+		return codebuddyauth.NewAIClientWithProxyURL(cfg, proxyURL)
+	},
+}
+
 // CodeBuddyCNExecutor talks to the CodeBuddy CN (Tencent) OpenAI-compatible gateway.
 //
 // CodeBuddy CN rejects non-stream chat requests (HTTP 400, code 11101). To keep the
@@ -63,10 +95,39 @@ func (e *CodeBuddyCNExecutor) Identifier() string { return constant.CodeBuddyCN 
 // single OpenAI JSON response for non-streaming clients. CodeBuddy CN rejects
 // non-stream requests (HTTP 400 code 11101), so the non-streaming path must
 // drive a streamed upstream request and fold the chunks into a chat.completion.
-func (e *CodeBuddyCNExecutor) Execute(ctx context.Context, auth *cliproxyauth.Auth, req cliproxyexecutor.Request, opts cliproxyexecutor.Options) (resp cliproxyexecutor.Response, err error) {
-	auth = prepareCodeBuddyCNAuth(auth)
+func (e *CodeBuddyCNExecutor) Execute(ctx context.Context, auth *cliproxyauth.Auth, req cliproxyexecutor.Request, opts cliproxyexecutor.Options) (cliproxyexecutor.Response, error) {
+	return executeCodeBuddyAggregated(ctx, e.OpenAICompatExecutor, codeBuddyCNAuthDefaults, auth, req, opts)
+}
+
+// ExecuteStream forces streaming and delegates to the OpenAI-compatible executor.
+func (e *CodeBuddyCNExecutor) ExecuteStream(ctx context.Context, auth *cliproxyauth.Auth, req cliproxyexecutor.Request, opts cliproxyexecutor.Options) (*cliproxyexecutor.StreamResult, error) {
+	return executeCodeBuddyStream(ctx, e.OpenAICompatExecutor, codeBuddyCNAuthDefaults, auth, req, opts)
+}
+
+// PrepareRequest injects CodeBuddy OAuth or API-key credentials into ad-hoc requests.
+func (e *CodeBuddyCNExecutor) PrepareRequest(req *http.Request, auth *cliproxyauth.Auth) error {
+	return e.OpenAICompatExecutor.PrepareRequest(req, prepareCodeBuddyAuth(auth, codeBuddyCNAuthDefaults))
+}
+
+// HttpRequest executes an ad-hoc CodeBuddy request with normalized credentials.
+func (e *CodeBuddyCNExecutor) HttpRequest(ctx context.Context, auth *cliproxyauth.Auth, req *http.Request) (*http.Response, error) {
+	return e.OpenAICompatExecutor.HttpRequest(ctx, prepareCodeBuddyAuth(auth, codeBuddyCNAuthDefaults), req)
+}
+
+// Refresh rotates CodeBuddy OAuth credentials using the stored refresh token.
+func (e *CodeBuddyCNExecutor) Refresh(ctx context.Context, auth *cliproxyauth.Auth) (*cliproxyauth.Auth, error) {
+	return refreshCodeBuddyAuth(ctx, e.OpenAICompatExecutor, codeBuddyCNAuthDefaults, auth)
+}
+
+// executeCodeBuddyAggregated forces streaming upstream and aggregates the SSE
+// chunks back into a single OpenAI JSON response for non-streaming clients. The
+// CodeBuddy gateways reject non-stream requests (HTTP 400 code 11101), so the
+// non-streaming path must drive a streamed upstream request and fold the chunks
+// into a chat.completion.
+func executeCodeBuddyAggregated(ctx context.Context, base *OpenAICompatExecutor, defaults codeBuddyAuthDefaults, auth *cliproxyauth.Auth, req cliproxyexecutor.Request, opts cliproxyexecutor.Options) (resp cliproxyexecutor.Response, err error) {
+	auth = prepareCodeBuddyAuth(auth, defaults)
 	opts.Stream = true
-	streamResult, err := e.OpenAICompatExecutor.ExecuteStream(ctx, auth, req, opts)
+	streamResult, err := base.ExecuteStream(ctx, auth, req, opts)
 	if err != nil {
 		return resp, err
 	}
@@ -90,42 +151,34 @@ func (e *CodeBuddyCNExecutor) Execute(ctx context.Context, auth *cliproxyauth.Au
 	return resp, nil
 }
 
-// ExecuteStream forces streaming and delegates to the OpenAI-compatible executor.
-func (e *CodeBuddyCNExecutor) ExecuteStream(ctx context.Context, auth *cliproxyauth.Auth, req cliproxyexecutor.Request, opts cliproxyexecutor.Options) (_ *cliproxyexecutor.StreamResult, err error) {
+// executeCodeBuddyStream forces streaming and delegates to the
+// OpenAI-compatible executor with normalized CodeBuddy credentials.
+func executeCodeBuddyStream(ctx context.Context, base *OpenAICompatExecutor, defaults codeBuddyAuthDefaults, auth *cliproxyauth.Auth, req cliproxyexecutor.Request, opts cliproxyexecutor.Options) (*cliproxyexecutor.StreamResult, error) {
 	opts.Stream = true
-	return e.OpenAICompatExecutor.ExecuteStream(ctx, prepareCodeBuddyCNAuth(auth), req, opts)
+	return base.ExecuteStream(ctx, prepareCodeBuddyAuth(auth, defaults), req, opts)
 }
 
-// PrepareRequest injects CodeBuddy OAuth or API-key credentials into ad-hoc requests.
-func (e *CodeBuddyCNExecutor) PrepareRequest(req *http.Request, auth *cliproxyauth.Auth) error {
-	return e.OpenAICompatExecutor.PrepareRequest(req, prepareCodeBuddyCNAuth(auth))
-}
-
-// HttpRequest executes an ad-hoc CodeBuddy request with normalized credentials.
-func (e *CodeBuddyCNExecutor) HttpRequest(ctx context.Context, auth *cliproxyauth.Auth, req *http.Request) (*http.Response, error) {
-	return e.OpenAICompatExecutor.HttpRequest(ctx, prepareCodeBuddyCNAuth(auth), req)
-}
-
-// Refresh rotates CodeBuddy OAuth credentials using the stored refresh token.
-func (e *CodeBuddyCNExecutor) Refresh(ctx context.Context, auth *cliproxyauth.Auth) (*cliproxyauth.Auth, error) {
-	if refreshed, handled, err := helps.RefreshAuthViaHome(ctx, e.OpenAICompatExecutor.cfg, auth); handled {
+// refreshCodeBuddyAuth rotates CodeBuddy OAuth credentials using the stored
+// refresh token, recording the gateway-specific provider and base URL.
+func refreshCodeBuddyAuth(ctx context.Context, base *OpenAICompatExecutor, defaults codeBuddyAuthDefaults, auth *cliproxyauth.Auth) (*cliproxyauth.Auth, error) {
+	if refreshed, handled, err := helps.RefreshAuthViaHome(ctx, base.cfg, auth); handled {
 		return refreshed, err
 	}
 	if auth == nil {
-		return nil, fmt.Errorf("codebuddy-cn executor: auth is nil")
+		return nil, fmt.Errorf("%s: auth is nil", defaults.errorPrefix)
 	}
 	refreshToken := codeBuddyCNMetadataString(auth, "refresh_token")
 	if refreshToken == "" {
 		return auth, nil
 	}
-	token, err := codebuddyauth.NewClientWithProxyURL(e.OpenAICompatExecutor.cfg, auth.ProxyURL).Refresh(ctx, refreshToken)
+	token, err := defaults.newAuthClient(base.cfg, auth.ProxyURL).Refresh(ctx, refreshToken)
 	if err != nil {
 		return nil, err
 	}
 	if auth.Metadata == nil {
 		auth.Metadata = make(map[string]any)
 	}
-	auth.Metadata["type"] = constant.CodeBuddyCN
+	auth.Metadata["type"] = defaults.provider
 	auth.Metadata["auth_kind"] = cliproxyauth.AuthKindOAuth
 	auth.Metadata["access_token"] = token.AccessToken
 	if strings.TrimSpace(token.RefreshToken) != "" {
@@ -146,12 +199,14 @@ func (e *CodeBuddyCNExecutor) Refresh(ctx context.Context, auth *cliproxyauth.Au
 	}
 	auth.Attributes[cliproxyauth.AttributeAuthKind] = cliproxyauth.AuthKindOAuth
 	if strings.TrimSpace(auth.Attributes["base_url"]) == "" {
-		auth.Attributes["base_url"] = codebuddyauth.APIBaseURL
+		auth.Attributes["base_url"] = defaults.apiBaseURL
 	}
 	return auth, nil
 }
 
-func prepareCodeBuddyCNAuth(auth *cliproxyauth.Auth) *cliproxyauth.Auth {
+// prepareCodeBuddyAuth normalizes CodeBuddy credentials and injects the shared
+// CLI headers used by both gateways.
+func prepareCodeBuddyAuth(auth *cliproxyauth.Auth, defaults codeBuddyAuthDefaults) *cliproxyauth.Auth {
 	if auth == nil {
 		return nil
 	}
@@ -162,14 +217,14 @@ func prepareCodeBuddyCNAuth(auth *cliproxyauth.Auth) *cliproxyauth.Auth {
 	if strings.TrimSpace(prepared.Attributes["base_url"]) == "" {
 		baseURL := codeBuddyCNMetadataString(prepared, "base_url")
 		if baseURL == "" {
-			baseURL = codebuddyauth.APIBaseURL
+			baseURL = defaults.apiBaseURL
 		}
 		prepared.Attributes["base_url"] = baseURL
 	}
 	if strings.TrimSpace(prepared.Attributes["api_key"]) == "" {
 		prepared.Attributes["api_key"] = codeBuddyCNMetadataString(prepared, "access_token")
 	}
-	defaults := map[string]string{
+	defaultsHeaders := map[string]string{
 		"User-Agent":          "CLI/2.108.1 CodeBuddy/2.108.1",
 		"X-Product":           "SaaS",
 		"X-IDE-Type":          "CLI",
@@ -177,7 +232,7 @@ func prepareCodeBuddyCNAuth(auth *cliproxyauth.Auth) *cliproxyauth.Auth {
 		"X-Requested-With":    "XMLHttpRequest",
 		"X-Codebuddy-Request": "1",
 	}
-	for name, value := range defaults {
+	for name, value := range defaultsHeaders {
 		if !codeBuddyCNHasCustomHeader(prepared.Attributes, name) {
 			prepared.Attributes["header:"+name] = value
 		}
@@ -206,6 +261,16 @@ func codeBuddyCNHasCustomHeader(attrs map[string]string, name string) bool {
 // forcing stream, mapping reasoning_effort to reasoning_summary, and
 // neutralizing agent system prompts.
 func applyCodeBuddyCNOutgoingTransforms(ctx context.Context, auth *cliproxyauth.Auth, baseModel string, opts cliproxyexecutor.Options, translated []byte) []byte {
+	return applyCodeBuddyOutgoingTransforms(translated)
+}
+
+// applyCodeBuddyAIOutgoingTransforms applies the same body normalization the
+// international CodeBuddy AI gateway requires (shared with CodeBuddy CN).
+func applyCodeBuddyAIOutgoingTransforms(ctx context.Context, auth *cliproxyauth.Auth, baseModel string, opts cliproxyexecutor.Options, translated []byte) []byte {
+	return applyCodeBuddyOutgoingTransforms(translated)
+}
+
+func applyCodeBuddyOutgoingTransforms(translated []byte) []byte {
 	body := translated
 	if len(body) == 0 {
 		return body

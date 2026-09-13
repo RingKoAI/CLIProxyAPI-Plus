@@ -141,6 +141,18 @@ func cachedCodeBuddyCNRoundTripper(proxyURL string) http.RoundTripper {
 // NewCodeBuddyCNHTTPClient creates a proxy-aware HTTP client that reproduces
 // the official CodeBuddy Code TLS fingerprint for CodeBuddy CN requests.
 func NewCodeBuddyCNHTTPClient(ctx context.Context, cfg *config.Config, auth *cliproxyauth.Auth, timeout time.Duration) *http.Client {
+	return newCodeBuddyHTTPClient(ctx, cfg, auth, timeout)
+}
+
+// NewCodeBuddyAIHTTPClient creates a proxy-aware HTTP client that reproduces
+// the official CodeBuddy Code TLS fingerprint for international CodeBuddy AI
+// requests. Both gateways are served by the same CodeBuddy Code build, so they
+// share the identical Node/OpenSSL ClientHello.
+func NewCodeBuddyAIHTTPClient(ctx context.Context, cfg *config.Config, auth *cliproxyauth.Auth, timeout time.Duration) *http.Client {
+	return newCodeBuddyHTTPClient(ctx, cfg, auth, timeout)
+}
+
+func newCodeBuddyHTTPClient(ctx context.Context, cfg *config.Config, auth *cliproxyauth.Auth, timeout time.Duration) *http.Client {
 	var proxyURL string
 	if auth != nil {
 		proxyURL = strings.TrimSpace(auth.ProxyURL)

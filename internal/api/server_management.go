@@ -151,6 +151,11 @@ func (s *Server) registerManagementRoutes() {
 		mgmt.PATCH("/codebuddy-cn-api-key", s.mgmt.PatchCodeBuddyCNKey)
 		mgmt.DELETE("/codebuddy-cn-api-key", s.mgmt.DeleteCodeBuddyCNKey)
 
+		mgmt.GET("/codebuddy-ai-api-key", s.mgmt.GetCodeBuddyAIKeys)
+		mgmt.PUT("/codebuddy-ai-api-key", s.mgmt.PutCodeBuddyAIKeys)
+		mgmt.PATCH("/codebuddy-ai-api-key", s.mgmt.PatchCodeBuddyAIKey)
+		mgmt.DELETE("/codebuddy-ai-api-key", s.mgmt.DeleteCodeBuddyAIKey)
+
 		mgmt.GET("/openai-compatibility", s.mgmt.GetOpenAICompat)
 		mgmt.PUT("/openai-compatibility", s.mgmt.PutOpenAICompat)
 		mgmt.PATCH("/openai-compatibility", s.mgmt.PatchOpenAICompat)
@@ -192,6 +197,7 @@ func (s *Server) registerManagementRoutes() {
 		mgmt.GET("/antigravity-auth-url", s.mgmt.RequestAntigravityToken)
 		mgmt.GET("/kimi-auth-url", s.mgmt.RequestKimiToken)
 		mgmt.GET("/codebuddy-cn-auth-url", s.mgmt.RequestCodeBuddyCNToken)
+		mgmt.GET("/codebuddy-ai-auth-url", s.mgmt.RequestCodeBuddyAIToken)
 		mgmt.GET("/xai-auth-url", s.mgmt.RequestXAIToken)
 		mgmt.POST("/web-login/qwen-web", s.mgmt.LoginQwenWeb)
 		mgmt.GET("/trae-auth-url", s.mgmt.RequestTraeToken)

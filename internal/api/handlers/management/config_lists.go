@@ -1769,12 +1769,51 @@ func (h *Handler) DeleteXAIKey(c *gin.Context) {
 	c.JSON(400, gin.H{"error": "missing api-key or index"})
 }
 
+// codeBuddyKeyListSpec parameterizes the CodeBuddy-style API-key list handlers
+// so CodeBuddy CN and CodeBuddy AI share identical CRUD behavior.
+type codeBuddyKeyListSpec struct {
+	yamlKey      string
+	authIndexKey string
+	get          func(cfg *config.Config) []config.CodeBuddyCNKey
+	set          func(cfg *config.Config, entries []config.CodeBuddyCNKey)
+	sanitize     func(cfg *config.Config)
+}
+
+var codeBuddyCNKeyListSpec = codeBuddyKeyListSpec{
+	yamlKey:      "codebuddy-cn-api-key",
+	authIndexKey: "codebuddy-cn:apikey",
+	get:          func(cfg *config.Config) []config.CodeBuddyCNKey { return cfg.CodeBuddyCNKey },
+	set:          func(cfg *config.Config, entries []config.CodeBuddyCNKey) { cfg.CodeBuddyCNKey = entries },
+	sanitize:     func(cfg *config.Config) { cfg.SanitizeCodeBuddyCNKeys() },
+}
+
+var codeBuddyAIKeyListSpec = codeBuddyKeyListSpec{
+	yamlKey:      "codebuddy-ai-api-key",
+	authIndexKey: "codebuddy-ai:apikey",
+	get:          func(cfg *config.Config) []config.CodeBuddyCNKey { return cfg.CodeBuddyAIKey },
+	set:          func(cfg *config.Config, entries []config.CodeBuddyCNKey) { cfg.CodeBuddyAIKey = entries },
+	sanitize:     func(cfg *config.Config) { cfg.SanitizeCodeBuddyAIKeys() },
+}
+
 // codebuddy-cn-api-key: []CodeBuddyCNKey
 func (h *Handler) GetCodeBuddyCNKeys(c *gin.Context) {
-	c.JSON(200, gin.H{"codebuddy-cn-api-key": h.codeBuddyCNKeysWithAuthIndex()})
+	c.JSON(200, gin.H{codeBuddyCNKeyListSpec.yamlKey: h.codeBuddyKeysWithAuthIndex(codeBuddyCNKeyListSpec)})
+}
+
+// codebuddy-ai-api-key: []CodeBuddyAIKey
+func (h *Handler) GetCodeBuddyAIKeys(c *gin.Context) {
+	c.JSON(200, gin.H{codeBuddyAIKeyListSpec.yamlKey: h.codeBuddyKeysWithAuthIndex(codeBuddyAIKeyListSpec)})
 }
 
 func (h *Handler) PutCodeBuddyCNKeys(c *gin.Context) {
+	h.putCodeBuddyKeys(c, codeBuddyCNKeyListSpec)
+}
+
+func (h *Handler) PutCodeBuddyAIKeys(c *gin.Context) {
+	h.putCodeBuddyKeys(c, codeBuddyAIKeyListSpec)
+}
+
+func (h *Handler) putCodeBuddyKeys(c *gin.Context, spec codeBuddyKeyListSpec) {
 	data, errRead := c.GetRawData()
 	if errRead != nil {
 		c.JSON(400, gin.H{"error": "failed to read body"})
@@ -1798,35 +1837,43 @@ func (h *Handler) PutCodeBuddyCNKeys(c *gin.Context) {
 		if entry.APIKey == "" {
 			continue
 		}
-		if rejectInvalidCredentialWeight(c, fmt.Sprintf("codebuddy-cn-api-key[%d].weight", i), entry.Weight) {
+		if rejectInvalidCredentialWeight(c, fmt.Sprintf("%s[%d].weight", spec.yamlKey, i), entry.Weight) {
 			return
 		}
 		filtered = append(filtered, entry)
 	}
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	h.cfg.CodeBuddyCNKey = filtered
-	h.cfg.SanitizeCodeBuddyCNKeys()
+	spec.set(h.cfg, filtered)
+	spec.sanitize(h.cfg)
 	h.persistLocked(c)
 }
 
 func (h *Handler) PatchCodeBuddyCNKey(c *gin.Context) {
-	type codeBuddyCNKeyPatch struct {
-		APIKey         *string                   `json:"api-key"`
-		Priority       *int                      `json:"priority"`
-		Weight         json.RawMessage           `json:"weight"`
-		Prefix         *string                   `json:"prefix"`
-		BaseURL        *string                   `json:"base-url"`
-		ProxyURL       *string                   `json:"proxy-url"`
+	h.patchCodeBuddyKey(c, codeBuddyCNKeyListSpec)
+}
+
+func (h *Handler) PatchCodeBuddyAIKey(c *gin.Context) {
+	h.patchCodeBuddyKey(c, codeBuddyAIKeyListSpec)
+}
+
+func (h *Handler) patchCodeBuddyKey(c *gin.Context, spec codeBuddyKeyListSpec) {
+	type codeBuddyKeyPatch struct {
+		APIKey         *string                    `json:"api-key"`
+		Priority       *int                       `json:"priority"`
+		Weight         json.RawMessage            `json:"weight"`
+		Prefix         *string                    `json:"prefix"`
+		BaseURL        *string                    `json:"base-url"`
+		ProxyURL       *string                    `json:"proxy-url"`
 		Models         *[]config.CodeBuddyCNModel `json:"models"`
-		Headers        *map[string]string        `json:"headers"`
-		ExcludedModels *[]string                 `json:"excluded-models"`
-		DisableCooling json.RawMessage           `json:"disable-cooling"`
+		Headers        *map[string]string         `json:"headers"`
+		ExcludedModels *[]string                  `json:"excluded-models"`
+		DisableCooling json.RawMessage            `json:"disable-cooling"`
 	}
 	var body struct {
-		Index *int                  `json:"index"`
-		Match *string               `json:"match"`
-		Value *codeBuddyCNKeyPatch  `json:"value"`
+		Index *int               `json:"index"`
+		Match *string            `json:"match"`
+		Value *codeBuddyKeyPatch `json:"value"`
 	}
 	if errBind := c.ShouldBindJSON(&body); errBind != nil || body.Value == nil {
 		c.JSON(400, gin.H{"error": "invalid body"})
@@ -1835,14 +1882,15 @@ func (h *Handler) PatchCodeBuddyCNKey(c *gin.Context) {
 
 	h.mu.Lock()
 	defer h.mu.Unlock()
+	entries := spec.get(h.cfg)
 	targetIndex := -1
-	if body.Index != nil && *body.Index >= 0 && *body.Index < len(h.cfg.CodeBuddyCNKey) {
+	if body.Index != nil && *body.Index >= 0 && *body.Index < len(entries) {
 		targetIndex = *body.Index
 	}
 	if targetIndex == -1 && body.Match != nil {
 		match := strings.TrimSpace(*body.Match)
-		for i := range h.cfg.CodeBuddyCNKey {
-			if h.cfg.CodeBuddyCNKey[i].APIKey == match {
+		for i := range entries {
+			if entries[i].APIKey == match {
 				targetIndex = i
 				break
 			}
@@ -1853,7 +1901,7 @@ func (h *Handler) PatchCodeBuddyCNKey(c *gin.Context) {
 		return
 	}
 
-	entry := h.cfg.CodeBuddyCNKey[targetIndex]
+	entry := entries[targetIndex]
 	if body.Value.APIKey != nil {
 		entry.APIKey = strings.TrimSpace(*body.Value.APIKey)
 	}
@@ -1890,34 +1938,44 @@ func (h *Handler) PatchCodeBuddyCNKey(c *gin.Context) {
 		return
 	}
 	normalizeCodeBuddyCNKey(&entry)
-	h.cfg.CodeBuddyCNKey[targetIndex] = entry
-	h.cfg.SanitizeCodeBuddyCNKeys()
+	entries[targetIndex] = entry
+	spec.set(h.cfg, entries)
+	spec.sanitize(h.cfg)
 	h.persistLocked(c)
 }
 
 func (h *Handler) DeleteCodeBuddyCNKey(c *gin.Context) {
+	h.deleteCodeBuddyKey(c, codeBuddyCNKeyListSpec)
+}
+
+func (h *Handler) DeleteCodeBuddyAIKey(c *gin.Context) {
+	h.deleteCodeBuddyKey(c, codeBuddyAIKeyListSpec)
+}
+
+func (h *Handler) deleteCodeBuddyKey(c *gin.Context, spec codeBuddyKeyListSpec) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
+	entries := spec.get(h.cfg)
 	if val := strings.TrimSpace(c.Query("api-key")); val != "" {
 		if baseRaw, okBase := c.GetQuery("base-url"); okBase {
 			base := strings.TrimSpace(baseRaw)
-			out := make([]config.CodeBuddyCNKey, 0, len(h.cfg.CodeBuddyCNKey))
-			for _, entry := range h.cfg.CodeBuddyCNKey {
+			out := make([]config.CodeBuddyCNKey, 0, len(entries))
+			for _, entry := range entries {
 				if strings.TrimSpace(entry.APIKey) == val && strings.TrimSpace(entry.BaseURL) == base {
 					continue
 				}
 				out = append(out, entry)
 			}
-			h.cfg.CodeBuddyCNKey = out
-			h.cfg.SanitizeCodeBuddyCNKeys()
+			spec.set(h.cfg, out)
+			spec.sanitize(h.cfg)
 			h.persistLocked(c)
 			return
 		}
 
 		matchIndex := -1
 		matchCount := 0
-		for i := range h.cfg.CodeBuddyCNKey {
-			if strings.TrimSpace(h.cfg.CodeBuddyCNKey[i].APIKey) == val {
+		for i := range entries {
+			if strings.TrimSpace(entries[i].APIKey) == val {
 				matchCount++
 				if matchIndex == -1 {
 					matchIndex = i
@@ -1929,18 +1987,20 @@ func (h *Handler) DeleteCodeBuddyCNKey(c *gin.Context) {
 			return
 		}
 		if matchIndex != -1 {
-			h.cfg.CodeBuddyCNKey = append(h.cfg.CodeBuddyCNKey[:matchIndex], h.cfg.CodeBuddyCNKey[matchIndex+1:]...)
+			entries = append(entries[:matchIndex], entries[matchIndex+1:]...)
 		}
-		h.cfg.SanitizeCodeBuddyCNKeys()
+		spec.set(h.cfg, entries)
+		spec.sanitize(h.cfg)
 		h.persistLocked(c)
 		return
 	}
 	if idxStr := c.Query("index"); idxStr != "" {
 		var idx int
 		_, err := fmt.Sscanf(idxStr, "%d", &idx)
-		if err == nil && idx >= 0 && idx < len(h.cfg.CodeBuddyCNKey) {
-			h.cfg.CodeBuddyCNKey = append(h.cfg.CodeBuddyCNKey[:idx], h.cfg.CodeBuddyCNKey[idx+1:]...)
-			h.cfg.SanitizeCodeBuddyCNKeys()
+		if err == nil && idx >= 0 && idx < len(entries) {
+			entries = append(entries[:idx], entries[idx+1:]...)
+			spec.set(h.cfg, entries)
+			spec.sanitize(h.cfg)
 			h.persistLocked(c)
 			return
 		}

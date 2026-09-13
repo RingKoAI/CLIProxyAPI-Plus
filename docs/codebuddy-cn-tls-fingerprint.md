@@ -100,6 +100,12 @@ transport that:
 6. respects per-auth and global proxy configuration; and
 7. keeps the profile scoped to CodeBuddy CN so other providers are unaffected.
 
+The international CodeBuddy AI gateway (`www.codebuddy.ai`) is served by the
+same `@tencent-ai/codebuddy-code` build and therefore shares this exact
+ClientHello. `internal/runtime/executor/helps` exposes it through both
+`NewCodeBuddyCNHTTPClient` and `NewCodeBuddyAIHTTPClient`, which reuse the same
+cached round tripper.
+
 TLS fingerprinting is only one possible server-side signal. The CodeBuddy CN
 executor also reproduces the official HTTP headers and request-shape behavior,
 including forced streaming and CodeBuddy-compatible reasoning parameters.

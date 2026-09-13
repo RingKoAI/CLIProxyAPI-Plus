@@ -37,7 +37,7 @@ go build -o cli-proxy-api ./cmd/server
 | `--standalone` | TUI 模式下内嵌启动本地服务 |
 | `--local-model` | 只使用内置模型表，不从远端更新 |
 | `--no-browser` | OAuth 登录时不自动打开浏览器 |
-| `--claude-login` / `--codex-login` / `--codex-device-login` / `--antigravity-login` / `--kimi-login` / `--codebuddy-cn-login` / `--xai-login` | 对应厂商的 OAuth 登录流程 |
+| `--claude-login` / `--codex-login` / `--codex-device-login` / `--antigravity-login` / `--kimi-login` / `--codebuddy-cn-login` / `--codebuddy-ai-login` / `--xai-login` | 对应厂商的 OAuth 登录流程 |
 
 ### 3. 添加账号
 

@@ -33,6 +33,7 @@ type staticModelsJSON struct {
 	Kimi        []*ModelInfo `json:"kimi"`
 	Antigravity []*ModelInfo `json:"antigravity"`
 	CodeBuddyCN []*ModelInfo `json:"codebuddy-cn"`
+	CodeBuddyAI []*ModelInfo `json:"codebuddy-ai"`
 	DeepSeekWeb []*ModelInfo `json:"deepseek-web"`
 	XAI         []*ModelInfo `json:"xai"`
 	Trae        []*ModelInfo `json:"trae"`
@@ -86,6 +87,11 @@ func GetKimiModels() []*ModelInfo {
 // GetCodeBuddyCNModels returns the standard CodeBuddy CN (Tencent) model definitions.
 func GetCodeBuddyCNModels() []*ModelInfo {
 	return cloneModelInfos(getModels().CodeBuddyCN)
+}
+
+// GetCodeBuddyAIModels returns the standard CodeBuddy AI (international) model definitions.
+func GetCodeBuddyAIModels() []*ModelInfo {
+	return cloneModelInfos(getModels().CodeBuddyAI)
 }
 
 // GetDeepSeekWebModels returns the standard DeepSeek Web model definitions.
@@ -368,6 +374,7 @@ func cloneModelInfos(models []*ModelInfo) []*ModelInfo {
 //   - codex
 //   - kimi
 //   - codebuddy-cn
+//   - codebuddy-ai
 //   - deepseek-web
 //   - antigravity
 //   - xai
@@ -390,6 +397,8 @@ func GetStaticModelDefinitionsByChannel(channel string) []*ModelInfo {
 		return GetKimiModels()
 	case "codebuddy-cn":
 		return GetCodeBuddyCNModels()
+	case "codebuddy-ai":
+		return GetCodeBuddyAIModels()
 	case "deepseek-web":
 		return GetDeepSeekWebModels()
 	case "antigravity":

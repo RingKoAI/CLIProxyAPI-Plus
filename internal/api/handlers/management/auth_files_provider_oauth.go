@@ -21,6 +21,7 @@ import (
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/auth/kimi"
 	traeauth "github.com/router-for-me/CLIProxyAPI/v7/internal/auth/trae"
 	xaiauth "github.com/router-for-me/CLIProxyAPI/v7/internal/auth/xai"
+	"github.com/router-for-me/CLIProxyAPI/v7/internal/config"
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/misc"
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/pluginhost"
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/util"
@@ -722,45 +723,81 @@ func (h *Handler) RequestKimiToken(c *gin.Context) {
 
 // RequestCodeBuddyCNToken starts CodeBuddy CN browser authorization and polls for tokens.
 func (h *Handler) RequestCodeBuddyCNToken(c *gin.Context) {
+	h.requestCodeBuddyToken(c, codeBuddyCNRequestSpec)
+}
+
+// RequestCodeBuddyAIToken starts international CodeBuddy AI browser
+// authorization and polls for tokens. The flow is identical to CodeBuddy CN;
+// only the gateway host and X-Domain value differ.
+func (h *Handler) RequestCodeBuddyAIToken(c *gin.Context) {
+	h.requestCodeBuddyToken(c, codeBuddyAIRequestSpec)
+}
+
+// codeBuddyOAuthRequestSpec parameterizes the CodeBuddy management OAuth flow.
+type codeBuddyOAuthRequestSpec struct {
+	provider    string
+	label       string
+	fileNamePre string
+	baseURL     string
+	newClient   func(cfg *config.Config) *codebuddycn.Client
+}
+
+var codeBuddyCNRequestSpec = codeBuddyOAuthRequestSpec{
+	provider:    "codebuddy-cn",
+	label:       "CodeBuddy CN",
+	fileNamePre: "codebuddy-cn",
+	baseURL:     codebuddycn.APIBaseURL,
+	newClient:   codebuddycn.NewClient,
+}
+
+var codeBuddyAIRequestSpec = codeBuddyOAuthRequestSpec{
+	provider:    "codebuddy-ai",
+	label:       "CodeBuddy AI",
+	fileNamePre: "codebuddy-ai",
+	baseURL:     codebuddycn.AIBaseURL,
+	newClient:   codebuddycn.NewAIClient,
+}
+
+func (h *Handler) requestCodeBuddyToken(c *gin.Context, spec codeBuddyOAuthRequestSpec) {
 	ctx := PopulateAuthContext(context.Background(), c)
-	client := codebuddycn.NewClient(h.cfg)
+	client := spec.newClient(h.cfg)
 	device, errStart := client.StartDeviceFlow(ctx)
 	if errStart != nil {
-		log.Errorf("Failed to start CodeBuddy CN authorization: %v", errStart)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to start CodeBuddy CN authorization"})
+		log.Errorf("Failed to start %s authorization: %v", spec.label, errStart)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to start " + spec.label + " authorization"})
 		return
 	}
 	state := strings.TrimSpace(device.State)
 	if errState := ValidateOAuthState(state); errState != nil {
-		log.WithError(errState).Error("CodeBuddy CN returned invalid authorization state")
+		log.WithError(errState).Errorf("%s returned invalid authorization state", spec.label)
 		c.JSON(http.StatusBadGateway, gin.H{"error": "invalid authorization state"})
 		return
 	}
-	RegisterOAuthSession(state, "codebuddy-cn")
+	RegisterOAuthSession(state, spec.provider)
 
 	go func() {
 		pollCtx, cancelPoll := context.WithCancel(ctx)
 		defer cancelPoll()
-		go watchOAuthSessionCancel(pollCtx, cancelPoll, state, "codebuddy-cn")
+		go watchOAuthSessionCancel(pollCtx, cancelPoll, state, spec.provider)
 		token, errWait := client.WaitForAuthorization(pollCtx, device)
 		if errWait != nil {
-			if !IsOAuthSessionPending(state, "codebuddy-cn") {
+			if !IsOAuthSessionPending(state, spec.provider) {
 				return
 			}
-			log.Errorf("CodeBuddy CN authentication failed: %v", errWait)
+			log.Errorf("%s authentication failed: %v", spec.label, errWait)
 			SetOAuthSessionError(state, oauthSessionErrorWithCause("Authentication failed", errWait))
 			return
 		}
-		if !IsOAuthSessionPending(state, "codebuddy-cn") {
+		if !IsOAuthSessionPending(state, spec.provider) {
 			return
 		}
 		metadata := map[string]any{
-			"type":         "codebuddy-cn",
+			"type":         spec.provider,
 			"auth_kind":    "oauth",
 			"access_token": token.AccessToken,
 			"token_type":   token.TokenType,
 			"expires_in":   token.ExpiresIn,
-			"base_url":     codebuddycn.APIBaseURL,
+			"base_url":     spec.baseURL,
 			"timestamp":    time.Now().UnixMilli(),
 		}
 		if strings.TrimSpace(token.RefreshToken) != "" {
@@ -769,29 +806,29 @@ func (h *Handler) RequestCodeBuddyCNToken(c *gin.Context) {
 		if !token.ExpiresAt.IsZero() {
 			metadata["expired"] = token.ExpiresAt.UTC().Format(time.RFC3339)
 		}
-		fileName := fmt.Sprintf("codebuddy-cn-%d.json", time.Now().UnixMilli())
+		fileName := fmt.Sprintf("%s-%d.json", spec.fileNamePre, time.Now().UnixMilli())
 		record := &coreauth.Auth{
 			ID:       fileName,
-			Provider: "codebuddy-cn",
+			Provider: spec.provider,
 			FileName: fileName,
-			Label:    "CodeBuddy CN",
+			Label:    spec.label,
 			Metadata: metadata,
 			Attributes: map[string]string{
 				coreauth.AttributeAuthKind: coreauth.AuthKindOAuth,
-				"base_url":                 codebuddycn.APIBaseURL,
+				"base_url":                 spec.baseURL,
 			},
 		}
-		if errGuard := guardOAuthSessionPendingForSave(state, "codebuddy-cn"); errGuard != nil {
+		if errGuard := guardOAuthSessionPendingForSave(state, spec.provider); errGuard != nil {
 			return
 		}
 		savedPath, errSave := h.saveTokenRecord(ctx, record)
 		if errSave != nil {
-			log.Errorf("Failed to save CodeBuddy CN token: %v", errSave)
+			log.Errorf("Failed to save %s token: %v", spec.label, errSave)
 			SetOAuthSessionError(state, "Failed to save authentication tokens")
 			return
 		}
 		CompleteOAuthSession(state)
-		fmt.Printf("CodeBuddy CN authentication successful! Token saved to %s\n", savedPath)
+		fmt.Printf("%s authentication successful! Token saved to %s\n", spec.label, savedPath)
 	}()
 
 	c.JSON(http.StatusOK, gin.H{

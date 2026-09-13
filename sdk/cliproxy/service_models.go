@@ -156,6 +156,17 @@ func (s *Service) registerModelsForAuthWithCache(ctx context.Context, a *coreaut
 			}
 		}
 		models = applyExcludedModels(models, excluded)
+	case constant.CodeBuddyAI:
+		models = registry.GetCodeBuddyAIModels()
+		if entry := s.resolveConfigCodeBuddyAIKey(a); entry != nil {
+			if len(entry.Models) > 0 {
+				models = buildCodeBuddyAIConfigModels(entry)
+			}
+			if authKind == "apikey" {
+				excluded = entry.ExcludedModels
+			}
+		}
+		models = applyExcludedModels(models, excluded)
 	case constant.DeepSeekWeb:
 		models = registry.GetDeepSeekWebModels()
 		if entry := s.resolveConfigDeepSeekWebKey(a); entry != nil {
@@ -934,6 +945,13 @@ func buildCodeBuddyCNConfigModels(entry *config.CodeBuddyCNKey) []*ModelInfo {
 	return buildConfigModels(entry.Models, constant.CodeBuddyCN, "openai")
 }
 
+func buildCodeBuddyAIConfigModels(entry *config.CodeBuddyAIKey) []*ModelInfo {
+	if entry == nil {
+		return nil
+	}
+	return buildConfigModels(entry.Models, constant.CodeBuddyAI, "openai")
+}
+
 func buildDeepSeekWebConfigModels(entry *config.DeepSeekWebKey) []*ModelInfo {
 	if entry == nil {
 		return nil
@@ -953,6 +971,13 @@ func (s *Service) resolveConfigCodeBuddyCNKey(auth *coreauth.Auth) *config.CodeB
 		return nil
 	}
 	return matchCodeBuddyCNConfigKey(auth, s.cfg.CodeBuddyCNKey)
+}
+
+func (s *Service) resolveConfigCodeBuddyAIKey(auth *coreauth.Auth) *config.CodeBuddyAIKey {
+	if s == nil || s.cfg == nil {
+		return nil
+	}
+	return matchCodeBuddyCNConfigKey(auth, s.cfg.CodeBuddyAIKey)
 }
 
 func matchCodeBuddyCNConfigKey(auth *coreauth.Auth, entries []config.CodeBuddyCNKey) *config.CodeBuddyCNKey {

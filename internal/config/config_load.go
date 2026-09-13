@@ -165,6 +165,9 @@ func LoadConfigOptional(configFile string, optional bool) (*Config, error) {
 	// Sanitize CodeBuddy CN keys: drop entries without api-key
 	cfg.SanitizeCodeBuddyCNKeys()
 
+	// Sanitize CodeBuddy AI keys: drop entries without api-key
+	cfg.SanitizeCodeBuddyAIKeys()
+
 	// Sanitize DeepSeek Web keys: drop entries without userToken.
 	cfg.SanitizeDeepSeekWebKeys()
 

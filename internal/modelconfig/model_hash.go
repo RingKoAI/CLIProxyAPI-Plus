@@ -86,6 +86,12 @@ func ComputeCodeBuddyCNModelsHash(models []config.CodeBuddyCNModel) string {
 	return hashJoined(keys)
 }
 
+// ComputeCodeBuddyAIModelsHash returns a stable hash for CodeBuddy AI
+// (international) model aliases.
+func ComputeCodeBuddyAIModelsHash(models []config.CodeBuddyAIModel) string {
+	return ComputeCodeBuddyCNModelsHash(models)
+}
+
 // ComputeGeminiModelsHash returns a stable hash for Gemini model aliases.
 func ComputeGeminiModelsHash(models []config.GeminiModel) string {
 	keys := modelRoutingKeys(func(out func(key string)) {

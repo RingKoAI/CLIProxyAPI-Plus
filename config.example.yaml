@@ -511,6 +511,33 @@ nonstream-keepalive-interval: 0
 #     excluded-models:
 #       - "deepseek-v3-2-volc"   # exclude specific models (exact match)
 
+# CodeBuddy AI (international) API keys — OpenAI-compatible gateway at www.codebuddy.ai.
+# The international build shares the same /v2 REST surface as CodeBuddy CN; only the
+# gateway host and the account authentication domain differ. OAuth accounts can be
+# added with `--codebuddy-ai-login` or from the TUI OAuth tab. The executor behavior
+# is identical to CodeBuddy CN (forced streaming, reasoning_summary mapping,
+# agent system prompt neutralization).
+# codebuddy-ai-api-key:
+#   - api-key: "cbai-..."
+#     weight: 5 # optional: weighted-round-robin share; omitted defaults to 1
+#     prefix: "cba" # optional: require calls like "cba/gpt-5.5" to target this credential
+#     disable-cooling: false # optional override
+#     base-url: "https://www.codebuddy.ai/v2" # optional override (executor appends /chat/completions)
+#     headers:
+#       X-Custom-Header: "custom-value"
+#     proxy-url: "socks5://proxy.example.com:1080" # optional: per-key proxy override
+#     models:
+#       - name: "gpt-5.5"        # upstream model name
+#         alias: "gpt-5.5"       # client alias mapped to the upstream model
+#         display-name: "GPT-5.5" # optional catalog display name
+#         max-context-length: 1000000 # optional: override context window metadata
+#         force-mapping: true    # optional: rewrite response model fields back to the alias
+#         is-compat: false       # optional: preserve thinking blocks for compatible upstreams
+#         thinking:              # optional: exact thinking capability for this model
+#           levels: ["low", "medium", "high"]
+#     excluded-models:
+#       - "gemini-2.5-pro"       # exclude specific models (exact match)
+
 # DeepSeek Web browser userToken. Copy userToken from chat.deepseek.com Local Storage;
 # either the raw token or the full {"value":"...","__version":"0"} JSON is accepted.
 # This provider uses DeepSeek's private web API and may break when the web client changes.

@@ -202,6 +202,14 @@ func (cfg *Config) SanitizeCodeBuddyCNKeys() {
 	cfg.CodeBuddyCNKey = sanitizeCodeBuddyStyleKeyEntries(cfg.CodeBuddyCNKey)
 }
 
+// SanitizeCodeBuddyAIKeys normalizes CodeBuddy AI (international) credentials.
+func (cfg *Config) SanitizeCodeBuddyAIKeys() {
+	if cfg == nil {
+		return
+	}
+	cfg.CodeBuddyAIKey = sanitizeCodeBuddyStyleKeyEntries(cfg.CodeBuddyAIKey)
+}
+
 // SanitizeDeepSeekWebKeys normalizes DeepSeek Web userToken credentials.
 func (cfg *Config) SanitizeDeepSeekWebKeys() {
 	if cfg == nil {

@@ -123,6 +123,9 @@ type Config struct {
 	// CodeBuddyCNKey defines CodeBuddy CN (Tencent) API key configurations.
 	CodeBuddyCNKey []CodeBuddyCNKey `yaml:"codebuddy-cn-api-key" json:"codebuddy-cn-api-key"`
 
+	// CodeBuddyAIKey defines CodeBuddy AI (international) API key configurations.
+	CodeBuddyAIKey []CodeBuddyAIKey `yaml:"codebuddy-ai-api-key" json:"codebuddy-ai-api-key"`
+
 	// DeepSeekWebKey defines DeepSeek Web userToken configurations.
 	DeepSeekWebKey []DeepSeekWebKey `yaml:"deepseek-web-api-key" json:"deepseek-web-api-key"`
 

@@ -12,6 +12,7 @@ import (
 
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/auth/codex"
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/config"
+	"github.com/router-for-me/CLIProxyAPI/v7/internal/constant"
 	coreauth "github.com/router-for-me/CLIProxyAPI/v7/sdk/cliproxy/auth"
 	"github.com/router-for-me/CLIProxyAPI/v7/sdk/pluginapi"
 	log "github.com/sirupsen/logrus"
@@ -205,12 +206,16 @@ func synthesizeFileAuths(ctx *SynthesisContext, fullPath string, data []byte) ([
 		CreatedAt: now,
 		UpdatedAt: now,
 	}
-	if provider == "codebuddy-cn" {
+	if provider == "codebuddy-cn" || provider == constant.CodeBuddyAI {
 		a.Attributes[coreauth.AttributeAuthKind] = coreauth.AuthKindOAuth
 		baseURL, _ := metadata["base_url"].(string)
 		baseURL = strings.TrimSpace(baseURL)
 		if baseURL == "" {
-			baseURL = "https://copilot.tencent.com/v2"
+			if provider == constant.CodeBuddyAI {
+				baseURL = "https://www.codebuddy.ai/v2"
+			} else {
+				baseURL = "https://copilot.tencent.com/v2"
+			}
 		}
 		a.Attributes["base_url"] = baseURL
 	}

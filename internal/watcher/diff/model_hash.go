@@ -38,6 +38,12 @@ func ComputeCodeBuddyCNModelsHash(models []config.CodeBuddyCNModel) string {
 	return modelconfig.ComputeCodeBuddyCNModelsHash(models)
 }
 
+// ComputeCodeBuddyAIModelsHash returns a stable hash for CodeBuddy AI
+// (international) model aliases.
+func ComputeCodeBuddyAIModelsHash(models []config.CodeBuddyAIModel) string {
+	return modelconfig.ComputeCodeBuddyAIModelsHash(models)
+}
+
 // ComputeGeminiModelsHash returns a stable hash for Gemini model aliases.
 func ComputeGeminiModelsHash(models []config.GeminiModel) string {
 	return modelconfig.ComputeGeminiModelsHash(models)

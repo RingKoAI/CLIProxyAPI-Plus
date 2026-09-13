@@ -12,3 +12,14 @@ func TestCodeBuddyCNAuthenticatorProviderAndRefreshLead(t *testing.T) {
 		t.Fatalf("RefreshLead() = %v", lead)
 	}
 }
+
+func TestCodeBuddyAIAuthenticatorProviderAndRefreshLead(t *testing.T) {
+	authenticator := NewCodeBuddyAIAuthenticator()
+	if authenticator.Provider() != "codebuddy-ai" {
+		t.Fatalf("Provider() = %q", authenticator.Provider())
+	}
+	lead := authenticator.RefreshLead()
+	if lead == nil || *lead <= 0 {
+		t.Fatalf("RefreshLead() = %v", lead)
+	}
+}

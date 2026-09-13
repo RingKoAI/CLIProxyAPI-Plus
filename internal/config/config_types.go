@@ -660,6 +660,15 @@ type DeepSeekWebKey = CodeBuddyCNKey
 // DeepSeekWebModel uses the shared static/configured model mapping shape.
 type DeepSeekWebModel = CodeBuddyCNModel
 
+// CodeBuddyAIKey uses the API-key entry shape for the CodeBuddy AI
+// (international, https://www.codebuddy.ai) gateway. The upstream is the same
+// OpenAI-compatible CodeBuddy REST surface as CodeBuddy CN; only the host and
+// the account's authentication domain differ.
+type CodeBuddyAIKey = CodeBuddyCNKey
+
+// CodeBuddyAIModel uses the shared static/configured model mapping shape.
+type CodeBuddyAIModel = CodeBuddyCNModel
+
 // TraeKey represents a TRAE SOLO CN desktop credential (Cloud-IDE-JWT +
 // optional refresh token + machine/device identity). The upstream protocol is
 // the desktop solo_work_lite channel at trae-api-cn.mchost.guru.

@@ -1,4 +1,6 @@
-// Package codebuddycn implements the CodeBuddy CN browser authorization polling flow.
+// Package codebuddycn implements the CodeBuddy browser authorization polling
+// flow shared by the CodeBuddy CN (copilot.tencent.com) and international
+// CodeBuddy AI (www.codebuddy.ai) gateways.
 package codebuddycn
 
 import (
@@ -29,6 +31,20 @@ const (
 	maxPollDuration   = 15 * time.Minute
 )
 
+// International (codebuddy-ai) endpoints. The international CodeBuddy build
+// shares the same /v2 REST surface as the CN gateway; only the host and the
+// X-Domain header value differ. These values mirror product.json's
+// endpoint (https://www.codebuddy.ai) for the external environment.
+const (
+	AIHost     = "www.codebuddy.ai"
+	AIBaseURL  = "https://www.codebuddy.ai/v2"
+	AIStateURL = "https://www.codebuddy.ai/v2/plugin/auth/state"
+	AITokenURL = "https://www.codebuddy.ai/v2/plugin/auth/token"
+)
+
+// AIRefreshURL is the international token refresh endpoint.
+const AIRefreshURL = "https://www.codebuddy.ai/v2/plugin/auth/token/refresh"
+
 var refreshGroup singleflight.Group
 
 // DeviceCode contains the state and browser URL returned by CodeBuddy.
@@ -54,6 +70,10 @@ type Client struct {
 	stateURL   string
 	tokenURL   string
 	refreshURL string
+	// domain is sent in the X-Domain header. It identifies the account's
+	// authentication domain (copilot.tencent.com for CN, www.codebuddy.ai for
+	// the international gateway).
+	domain string
 }
 
 // NewClient creates a proxy-aware CodeBuddy OAuth client.
@@ -63,6 +83,21 @@ func NewClient(cfg *config.Config) *Client {
 
 // NewClientWithProxyURL creates a client with an optional per-auth proxy override.
 func NewClientWithProxyURL(cfg *config.Config, proxyURL string) *Client {
+	return newClientWithEndpoints(cfg, proxyURL, StateURL, TokenURL, RefreshURL, "copilot.tencent.com")
+}
+
+// NewAIClient creates a client for the international CodeBuddy gateway.
+func NewAIClient(cfg *config.Config) *Client {
+	return NewAIClientWithProxyURL(cfg, "")
+}
+
+// NewAIClientWithProxyURL creates an international client with an optional
+// per-auth proxy override.
+func NewAIClientWithProxyURL(cfg *config.Config, proxyURL string) *Client {
+	return newClientWithEndpoints(cfg, proxyURL, AIStateURL, AITokenURL, AIRefreshURL, AIHost)
+}
+
+func newClientWithEndpoints(cfg *config.Config, proxyURL, stateURL, tokenURL, refreshURL, domain string) *Client {
 	httpClient := &http.Client{Timeout: 30 * time.Second}
 	var sdkCfg config.SDKConfig
 	if cfg != nil {
@@ -72,11 +107,14 @@ func NewClientWithProxyURL(cfg *config.Config, proxyURL string) *Client {
 		sdkCfg.ProxyURL = strings.TrimSpace(proxyURL)
 	}
 	httpClient = util.SetProxy(&sdkCfg, httpClient)
-	return newClient(httpClient, StateURL, TokenURL, RefreshURL)
+	return newClient(httpClient, stateURL, tokenURL, refreshURL, domain)
 }
 
-func newClient(httpClient *http.Client, stateURL, tokenURL, refreshURL string) *Client {
-	return &Client{httpClient: httpClient, stateURL: stateURL, tokenURL: tokenURL, refreshURL: refreshURL}
+func newClient(httpClient *http.Client, stateURL, tokenURL, refreshURL, domain string) *Client {
+	if strings.TrimSpace(domain) == "" {
+		domain = "copilot.tencent.com"
+	}
+	return &Client{httpClient: httpClient, stateURL: stateURL, tokenURL: tokenURL, refreshURL: refreshURL, domain: domain}
 }
 
 // StartDeviceFlow requests the browser authorization URL.
@@ -95,7 +133,7 @@ func (c *Client) StartDeviceFlow(ctx context.Context) (*DeviceCode, error) {
 	if err != nil {
 		return nil, fmt.Errorf("codebuddy-cn: create state request: %w", err)
 	}
-	applyHeaders(req, false)
+	applyHeaders(req, false, c.domain)
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("codebuddy-cn: state request failed: %w", err)
@@ -174,7 +212,7 @@ func (c *Client) pollToken(ctx context.Context, state string) (*TokenData, bool,
 	if err != nil {
 		return nil, false, fmt.Errorf("codebuddy-cn: create token request: %w", err)
 	}
-	applyHeaders(req, true)
+	applyHeaders(req, true, c.domain)
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
 		return nil, false, fmt.Errorf("codebuddy-cn: token request failed: %w", err)
@@ -225,7 +263,7 @@ func (c *Client) refresh(ctx context.Context, refreshToken string) (*TokenData, 
 	if err != nil {
 		return nil, fmt.Errorf("codebuddy-cn: create refresh request: %w", err)
 	}
-	applyHeaders(req, false)
+	applyHeaders(req, false, c.domain)
 	req.Header.Set("X-Refresh-Token", refreshToken)
 	req.Header.Set("X-Auth-Refresh-Source", "plugin")
 	resp, err := c.httpClient.Do(req)
@@ -283,11 +321,14 @@ func parseTokenResponse(body []byte) (*TokenData, error) {
 	return token, nil
 }
 
-func applyHeaders(req *http.Request, polling bool) {
+func applyHeaders(req *http.Request, polling bool, domain string) {
+	if strings.TrimSpace(domain) == "" {
+		domain = "copilot.tencent.com"
+	}
 	req.Header.Set("Accept", "application/json")
 	req.Header.Set("User-Agent", UserAgent)
 	req.Header.Set("X-Requested-With", "XMLHttpRequest")
-	req.Header.Set("X-Domain", "copilot.tencent.com")
+	req.Header.Set("X-Domain", domain)
 	req.Header.Set("X-No-Authorization", "true")
 	req.Header.Set("X-No-User-Id", "true")
 	req.Header.Set("X-Product", "SaaS")

@@ -38,7 +38,7 @@ func TestClientDeviceFlow(t *testing.T) {
 	}))
 	defer server.Close()
 
-	client := newClient(server.Client(), server.URL+"/state", server.URL+"/token", server.URL+"/refresh")
+	client := newClient(server.Client(), server.URL+"/state", server.URL+"/token", server.URL+"/refresh", "copilot.tencent.com")
 	device, err := client.StartDeviceFlow(context.Background())
 	if err != nil {
 		t.Fatalf("StartDeviceFlow() error = %v", err)
@@ -68,7 +68,7 @@ func TestClientRefreshUsesHeader(t *testing.T) {
 	}))
 	defer server.Close()
 
-	client := newClient(server.Client(), server.URL, server.URL, server.URL)
+	client := newClient(server.Client(), server.URL, server.URL, server.URL, "copilot.tencent.com")
 	token, err := client.Refresh(context.Background(), " refresh-old ")
 	if err != nil {
 		t.Fatalf("Refresh() error = %v", err)
@@ -82,5 +82,33 @@ func TestParseTokenResponseRejectsMissingAccessToken(t *testing.T) {
 	_, err := parseTokenResponse([]byte(`{"code":0,"data":{"refreshToken":"refresh-only"}}`))
 	if err == nil || !strings.Contains(err.Error(), "missing access token") {
 		t.Fatalf("error = %v", err)
+	}
+}
+
+func TestAIClientUsesInternationalHostAndDomain(t *testing.T) {
+	var gotDomain, gotPath string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotDomain = r.Header.Get("X-Domain")
+		gotPath = r.URL.Path
+		_, _ = fmt.Fprint(w, `{"code":0,"data":{"state":"s","authUrl":"https://example.test/authorize"}}`)
+	}))
+	defer server.Close()
+
+	client := newClient(server.Client(), server.URL+"/state", server.URL+"/token", server.URL+"/refresh", AIHost)
+	if _, err := client.StartDeviceFlow(context.Background()); err != nil {
+		t.Fatalf("StartDeviceFlow() error = %v", err)
+	}
+	if gotDomain != AIHost {
+		t.Fatalf("X-Domain = %q, want %q", gotDomain, AIHost)
+	}
+	if gotPath != "/state" {
+		t.Fatalf("path = %q", gotPath)
+	}
+}
+
+func TestAIClientDefaultsDomainWhenEmpty(t *testing.T) {
+	client := newClient(nil, "https://example.test/state", "https://example.test/token", "https://example.test/refresh", "")
+	if client.domain != "copilot.tencent.com" {
+		t.Fatalf("domain = %q, want default", client.domain)
 	}
 }

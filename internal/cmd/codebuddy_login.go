@@ -11,16 +11,26 @@ import (
 
 // DoCodeBuddyCNLogin starts CodeBuddy CN browser authorization and saves the tokens.
 func DoCodeBuddyCNLogin(cfg *config.Config, options *LoginOptions) {
+	doCodeBuddyLogin(cfg, options, "codebuddy-cn", "CodeBuddy CN")
+}
+
+// DoCodeBuddyAILogin starts international CodeBuddy AI browser authorization and
+// saves the tokens.
+func DoCodeBuddyAILogin(cfg *config.Config, options *LoginOptions) {
+	doCodeBuddyLogin(cfg, options, "codebuddy-ai", "CodeBuddy AI")
+}
+
+func doCodeBuddyLogin(cfg *config.Config, options *LoginOptions, provider, label string) {
 	if options == nil {
 		options = &LoginOptions{}
 	}
-	record, savedPath, err := newAuthManager().Login(context.Background(), "codebuddy-cn", cfg, &sdkAuth.LoginOptions{
+	record, savedPath, err := newAuthManager().Login(context.Background(), provider, cfg, &sdkAuth.LoginOptions{
 		NoBrowser: options.NoBrowser,
 		Metadata:  map[string]string{},
 		Prompt:    options.Prompt,
 	})
 	if err != nil {
-		log.Errorf("CodeBuddy CN authentication failed: %v", err)
+		log.Errorf("%s authentication failed: %v", label, err)
 		return
 	}
 	if savedPath != "" {
@@ -29,5 +39,5 @@ func DoCodeBuddyCNLogin(cfg *config.Config, options *LoginOptions) {
 	if record != nil && record.Label != "" {
 		fmt.Printf("Authenticated as %s\n", record.Label)
 	}
-	fmt.Println("CodeBuddy CN authentication successful!")
+	fmt.Printf("%s authentication successful!\n", label)
 }

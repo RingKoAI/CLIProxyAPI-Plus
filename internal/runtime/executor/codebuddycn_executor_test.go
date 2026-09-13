@@ -20,9 +20,9 @@ func TestPrepareCodeBuddyCNAuthUsesOAuthTokenAndHeaders(t *testing.T) {
 			"header:X-IDE-Name": "custom-client",
 		},
 	}
-	prepared := prepareCodeBuddyCNAuth(auth)
+	prepared := prepareCodeBuddyAuth(auth, codeBuddyCNAuthDefaults)
 	if prepared == auth {
-		t.Fatal("prepareCodeBuddyCNAuth returned original auth")
+		t.Fatal("prepareCodeBuddyAuth returned original auth")
 	}
 	if got := prepared.Attributes["api_key"]; got != "oauth-access" {
 		t.Fatalf("api_key = %q", got)

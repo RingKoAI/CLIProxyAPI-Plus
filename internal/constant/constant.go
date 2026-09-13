@@ -28,6 +28,9 @@ const (
 	// CodeBuddyCN represents the CodeBuddy CN (Tencent) provider identifier.
 	CodeBuddyCN = "codebuddy-cn"
 
+	// CodeBuddyAI represents the CodeBuddy AI (international) provider identifier.
+	CodeBuddyAI = "codebuddy-ai"
+
 	// DeepSeekWeb represents the DeepSeek authenticated web-session provider identifier.
 	DeepSeekWeb = "deepseek-web"
 
