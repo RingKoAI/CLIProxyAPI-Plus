@@ -1,6 +1,8 @@
 @Token = sk-test
 @BASE_URL = http://localhost:8317
 @MODEL_ID = qwen3.8-max
+@QWEN_WEB_CHAT = qwen-web-chat
+@QWEN_WEB_IMAGE = qwen-web-image
 
 ### chat-completions
 
@@ -113,3 +115,146 @@ Content-Type: application/json
   "messages": [{"role": "user", "content": "hi"}],
   "stream": false
 }
+
+### qwen-web chat (non-streaming)
+
+POST {{BASE_URL}}/v1/chat/completions
+Authorization: Bearer {{Token}}
+Content-Type: application/json
+
+{
+  "model": "{{ QWEN_WEB_CHAT }}",
+  "messages": [{"role": "user", "content": "请用一句话介绍你自己。"}],
+  "stream": false
+}
+
+### qwen-web chat (streaming)
+
+POST {{BASE_URL}}/v1/chat/completions
+Authorization: Bearer {{Token}}
+Content-Type: application/json
+
+{
+  "model": "{{ QWEN_WEB_CHAT }}",
+  "messages": [{"role": "user", "content": "请用一句话介绍你自己。"}],
+  "stream": true
+}
+
+### qwen-web chat multi-turn (history is flattened into one upstream turn)
+
+POST {{BASE_URL}}/v1/chat/completions
+Authorization: Bearer {{Token}}
+Content-Type: application/json
+
+{
+  "model": "{{ QWEN_WEB_CHAT }}",
+  "messages": [
+    {"role": "user", "content": "记住这个词：香蕉船。"},
+    {"role": "assistant", "content": "好的，我记住了：香蕉船。"},
+    {"role": "user", "content": "我刚才让你记住的词是什么？"}
+  ],
+  "stream": false
+}
+
+### qwen-web image generation (response_format=url is required)
+
+POST {{BASE_URL}}/v1/images/generations
+Authorization: Bearer {{Token}}
+Content-Type: application/json
+
+{
+  "model": "{{ QWEN_WEB_IMAGE }}",
+  "prompt": "一只坐在蓝色垫子上的橘猫，水彩风格",
+  "size": "16:9",
+  "response_format": "url"
+}
+
+### qwen-web image generation (default 1:1)
+
+POST {{BASE_URL}}/v1/images/generations
+Authorization: Bearer {{Token}}
+Content-Type: application/json
+
+{
+  "model": "{{ QWEN_WEB_IMAGE }}",
+  "prompt": "a small orange cat, watercolor",
+  "response_format": "url"
+}
+
+### qwen-web rejects tool calling (expect 400)
+
+POST {{BASE_URL}}/v1/chat/completions
+Authorization: Bearer {{Token}}
+Content-Type: application/json
+
+{
+  "model": "{{ QWEN_WEB_CHAT }}",
+  "messages": [{"role": "user", "content": "现在几点了？"}],
+  "tools": [
+    {
+      "type": "function",
+      "function": {
+        "name": "get_time",
+        "description": "Get the current time",
+        "parameters": {"type": "object", "properties": {}}
+      }
+    }
+  ],
+  "stream": false
+}
+
+### qwen-web rejects configurable reasoning (expect 400)
+
+POST {{BASE_URL}}/v1/chat/completions
+Authorization: Bearer {{Token}}
+Content-Type: application/json
+
+{
+  "model": "{{ QWEN_WEB_CHAT }}",
+  "messages": [{"role": "user", "content": "9.11 和 9.9 哪个大？"}],
+  "reasoning_effort": "high",
+  "stream": false
+}
+
+### qwen-web image model rejects b64_json (expect 400)
+
+POST {{BASE_URL}}/v1/images/generations
+Authorization: Bearer {{Token}}
+Content-Type: application/json
+
+{
+  "model": "{{ QWEN_WEB_IMAGE }}",
+  "prompt": "a small orange cat",
+  "response_format": "b64_json"
+}
+
+### qwen-web image model rejects streaming (expect 400)
+
+POST {{BASE_URL}}/v1/images/generations
+Authorization: Bearer {{Token}}
+Content-Type: application/json
+
+{
+  "model": "{{ QWEN_WEB_IMAGE }}",
+  "prompt": "a small orange cat",
+  "response_format": "url",
+  "stream": true
+}
+
+### qwen-web chat model rejects image requests (expect 400)
+
+POST {{BASE_URL}}/v1/chat/completions
+Authorization: Bearer {{Token}}
+Content-Type: application/json
+
+{
+  "model": "{{ QWEN_WEB_CHAT }}",
+  "messages": [{"role": "user", "content": [{"type": "image_url", "image_url": {"url": "https://cdn.qwenlm.ai/a.png"}}]}],
+  "stream": false
+}
+
+### list models (qwen-web entries appear once an account is imported)
+
+GET {{BASE_URL}}/v1/models
+Authorization: Bearer {{Token}}
+Content-Type: application/json

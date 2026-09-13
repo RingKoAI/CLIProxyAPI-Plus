@@ -47,7 +47,10 @@ TRAE_DEVICE_ID，或 --trae-data-dir 显式指定真实 AHA DID。
   uv run trae_checkin.py --auth-dir ~/.cli-proxy-api/auths          # 批量签到
   uv run trae_checkin.py --auth-dir ~/.cli-proxy-api/auths --prefix trae  # 只处理 trae*.json
   uv run trae_checkin.py --usage                          # 附带查询积分余额
-  uv run trae_checkin.py --retry 3 --retry-delay 30       # 遇排队错误自动重试
+  uv run trae_checkin.py --retry 3 --retry-delay 30       # 手动调低尝试次数/间隔
+
+默认签到尝试 5 次、间隔 25 秒（覆盖约 100 秒）：9074 是服务端短时限流，
+窗口约 60 秒，间隔过短会在窗口内耗尽尝试次数。
 
 业务错误码（实测）:
   code 0                      签到成功（仍需用当日权益包确认到账）
@@ -117,6 +120,10 @@ DEFAULT_DEVICE_BRAND = "83DG"
 DEFAULT_DEVICE_TYPE = "windows"
 DEFAULT_OS_VERSION = "Windows 11 Home"
 DEFAULT_APP_VERSION = "0.1.62"
+# 9074 是服务端的短时限流：实测同一 device_id 在窗口内连败、窗口过去后放行，
+# 窗口约 60s。默认覆盖约 (5-1)*25 = 100s，并会在重试时自动改用数值 DID。
+DEFAULT_RETRY_ATTEMPTS = 5
+DEFAULT_RETRY_DELAY = 25
 AHA_REMOTE_DEVICE_ID_PATTERN = re.compile(r"^[0-9]{12,20}$")
 AHA_LOG_DEVICE_PATTERNS = (
     re.compile(r"\[ICDRS\].*resolve rdid:\s*([0-9]{12,20})"),
@@ -477,8 +484,8 @@ def _run_one(args: argparse.Namespace, session: dict, ug_host: str) -> int:
         )
 
     print("\n[i] 执行签到...")
-    attempts = max(1, getattr(args, "retry", 1))
-    delay = max(0, getattr(args, "retry_delay", 5))
+    attempts = max(1, getattr(args, "retry", DEFAULT_RETRY_ATTEMPTS))
+    delay = max(0, getattr(args, "retry_delay", DEFAULT_RETRY_DELAY))
     ccode: int | None = None
     cpayload: dict = {}
 
@@ -567,11 +574,12 @@ def _run_one(args: argparse.Namespace, session: dict, ug_host: str) -> int:
         break
 
     if ccode in RETRYABLE_CODES:
+        span = int(attempts - 1) * delay
         print(
             f"\n[!] 签到未成功：{ccode_msg(ccode)}\n"
-            "[i] 说明：未签到账号使用随机 hex32 device_id 时会被软拒绝。\n"
-            "    脚本已自动改用数值 DID 重试；可用 --retry 提高尝试次数，\n"
-            "    或用 --trae-data-dir / TRAE_DEVICE_ID 指定真实 AHA DID。"
+            f"[i] 说明：9074 是服务端短时限流（窗口约 60 秒），已用 {attempts} 次尝试覆盖\n"
+            f"    {span} 秒。可用 --retry / --retry-delay 加长覆盖时间后重跑；\n"
+            "    脚本会在重试时自动把 hex32 换成数值 DID。"
         )
         return 2
 
@@ -710,10 +718,21 @@ def main() -> int:
     ap.add_argument(
         "--retry",
         type=int,
-        default=3,
-        help="签到尝试次数；9074 排队会自动改用数值 DID 重试（默认 3）",
+        default=DEFAULT_RETRY_ATTEMPTS,
+        help=(
+            "签到尝试次数；9074 排队会自动改用数值 DID 重试"
+            f"（默认 {DEFAULT_RETRY_ATTEMPTS}）"
+        ),
     )
-    ap.add_argument("--retry-delay", type=int, default=5, help="重试间隔秒数（默认 5）")
+    ap.add_argument(
+        "--retry-delay",
+        type=int,
+        default=DEFAULT_RETRY_DELAY,
+        help=(
+            f"重试间隔秒数（默认 {DEFAULT_RETRY_DELAY}）。"
+            "9074 是短时限流，间隔太短会持续撞在窗口内"
+        ),
+    )
     ap.add_argument("--verbose", action="store_true", help="打印每次重试的原始响应")
     ap.add_argument("--timeout", type=int, default=15)
     args = ap.parse_args()
