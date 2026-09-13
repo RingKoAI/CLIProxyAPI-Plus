@@ -648,6 +648,12 @@ func (h *OpenAIAPIHandler) ImagesGenerations(c *gin.Context) {
 		return
 	}
 
+	// Web image models return generated URLs without fetching them on the proxy.
+	if info := registry.LookupModelInfo(imageModel); info != nil && info.OwnedBy == "qwen-web" && info.Type == registry.OpenAIImageModelType {
+		h.collectImagesWithModel(c, rawJSON, imageModel, "url")
+		return
+	}
+
 	responseFormat := strings.TrimSpace(gjson.GetBytes(rawJSON, "response_format").String())
 	if responseFormat == "" {
 		responseFormat = "b64_json"
