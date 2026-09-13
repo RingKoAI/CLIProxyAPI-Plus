@@ -5,9 +5,11 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/http/httptest"
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	coreauth "github.com/router-for-me/CLIProxyAPI/v7/sdk/cliproxy/auth"
 	execution "github.com/router-for-me/CLIProxyAPI/v7/sdk/cliproxy/executor"
@@ -137,5 +139,89 @@ func TestQwenWebExecutorRedactsNetworkErrorAndRejectsForeignHost(t *testing.T) {
 		if err == nil || strings.Contains(err.Error(), "test-session") {
 			t.Fatalf("unsafe error: %v", err)
 		}
+	}
+}
+
+func TestQwenWebRefreshSlidesSession(t *testing.T) {
+	calls := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		if r.URL.Path != "/api/v1/auths/" {
+			t.Errorf("path = %s", r.URL.Path)
+		}
+		if r.Header.Get("Cookie") != "token=old" {
+			t.Errorf("cookie = %q", r.Header.Get("Cookie"))
+		}
+		// The server re-issues the session Cookie with a later expiry.
+		http.SetCookie(w, &http.Cookie{Name: "token", Value: "renewed", HttpOnly: true, Path: "/"})
+		fmt.Fprint(w, `{"id":"a","role":"user","token":"renewed"}`)
+	}))
+	defer server.Close()
+	e := NewQwenWebExecutor(nil)
+	e.baseURL = server.URL
+	auth := &coreauth.Auth{ID: "a", Provider: "qwen-web", Metadata: map[string]any{
+		"access_token": "old", "cookie": "token=old",
+	}}
+	updated, err := e.Refresh(context.Background(), auth)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if calls != 1 {
+		t.Fatalf("calls = %d", calls)
+	}
+	if updated.Metadata["cookie"] != "token=renewed" {
+		t.Fatalf("cookie = %v", updated.Metadata["cookie"])
+	}
+	if updated.Metadata["access_token"] != "renewed" {
+		t.Fatalf("access_token = %v", updated.Metadata["access_token"])
+	}
+	// The caller's auth must not be mutated; the manager persists the returned copy.
+	if auth.Metadata["cookie"] != "token=old" {
+		t.Fatal("original auth mutated")
+	}
+	if e.RefreshLead() == nil || *e.RefreshLead() != 7*24*time.Hour {
+		t.Fatalf("RefreshLead = %v", e.RefreshLead())
+	}
+}
+
+func TestQwenWebRefreshRejectsUnrenewedSession(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// No token Cookie: the session was not recognized.
+		fmt.Fprint(w, `{"id":"a","role":"user"}`)
+	}))
+	defer server.Close()
+	e := NewQwenWebExecutor(nil)
+	e.baseURL = server.URL
+	_, err := e.Refresh(context.Background(), &coreauth.Auth{Metadata: map[string]any{"cookie": "token=old"}})
+	if err == nil {
+		t.Fatal("expected an error when the session is not renewed")
+	}
+}
+
+func TestQwenWebRefreshDoesNotRewriteWhenUnchanged(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.SetCookie(w, &http.Cookie{Name: "token", Value: "same", Path: "/"})
+		fmt.Fprint(w, `{"id":"a","role":"user","token":"same"}`)
+	}))
+	defer server.Close()
+	e := NewQwenWebExecutor(nil)
+	e.baseURL = server.URL
+	auth := &coreauth.Auth{Metadata: map[string]any{"access_token": "same", "cookie": "token=same"}}
+	updated, err := e.Refresh(context.Background(), auth)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Values are identical, so downstream persistence is a no-op diff.
+	if updated.Metadata["cookie"] != "token=same" || updated.Metadata["access_token"] != "same" {
+		t.Fatalf("unexpected values: %v", updated.Metadata)
+	}
+}
+
+func TestQwenWebRefreshRejectsForeignHost(t *testing.T) {
+	e := NewQwenWebExecutor(nil)
+	// No test override: only chat.qwen.ai is allowed.
+	req, _ := http.NewRequest(http.MethodGet, "https://example.com/api/v1/auths/", nil)
+	if err := e.PrepareRequest(req, &coreauth.Auth{Metadata: map[string]any{"cookie": "token=x"}}); err == nil {
+		t.Fatal("foreign host accepted")
 	}
 }

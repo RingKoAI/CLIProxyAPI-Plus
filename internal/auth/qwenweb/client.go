@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/sha256"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -14,6 +15,7 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"time"
 
 	"github.com/google/uuid"
 )
@@ -249,4 +251,51 @@ func (c *Client) userRequest(ctx context.Context, method, path, token, cookie st
 		return User{}, "", &Error{401, "Qwen did not return an active account; complete account verification on chat.qwen.ai"}
 	}
 	return user, captured, nil
+}
+
+// TokenExpiry extracts the exp claim from a Qwen session JWT.
+// The session token is a JWT whose exp is issue time + 30 days. Qwen has no
+// refresh_token and no dedicated refresh endpoint; the server instead re-issues
+// the token Cookie on ordinary requests, which slides the expiry forward.
+func TokenExpiry(token string) (time.Time, bool) {
+	parts := strings.Split(token, ".")
+	if len(parts) != 3 {
+		return time.Time{}, false
+	}
+	raw, errDecode := base64.RawURLEncoding.DecodeString(parts[1])
+	if errDecode != nil {
+		return time.Time{}, false
+	}
+	var claims struct {
+		Exp int64 `json:"exp"`
+	}
+	if json.Unmarshal(raw, &claims) != nil || claims.Exp <= 0 {
+		return time.Time{}, false
+	}
+	return time.Unix(claims.Exp, 0), true
+}
+
+// CookieValue returns the session token stored in a Cookie header produced by
+// SessionCookie, or empty when the header holds no recognized session cookie.
+func CookieValue(cookieHeader string) string {
+	if strings.TrimSpace(cookieHeader) == "" {
+		return ""
+	}
+	raw := strings.TrimSpace(cookieHeader)
+	if !strings.Contains(raw, ";") && strings.Contains(raw, ".") {
+		// Already a bare token value.
+		return raw
+	}
+	cookies := (&http.Request{Header: http.Header{"Cookie": {raw}}}).Cookies()
+	for _, name := range []string{"token", "qwen_token"} {
+		for _, cookie := range cookies {
+			if cookie == nil || cookie.Name != name {
+				continue
+			}
+			if validToken(cookie.Value) {
+				return cookie.Value
+			}
+		}
+	}
+	return ""
 }

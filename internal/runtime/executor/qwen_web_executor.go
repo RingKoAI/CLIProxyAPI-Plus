@@ -25,10 +25,22 @@ import (
 
 // QwenWebExecutor uses isolated temporary upstream chats. It deliberately does
 // not emulate tool calling or share web conversation state between API callers.
-type QwenWebExecutor struct{ cfg *config.Config }
+type QwenWebExecutor struct {
+	cfg *config.Config
+	// baseURL overrides the upstream host in tests; empty means the real one.
+	baseURL string
+}
 
 func NewQwenWebExecutor(cfg *config.Config) *QwenWebExecutor { return &QwenWebExecutor{cfg: cfg} }
-func (e *QwenWebExecutor) Identifier() string                { return qwenweb.Provider }
+
+// base returns the upstream base URL, limited to a test override or Qwen itself.
+func (e *QwenWebExecutor) base() string {
+	if e != nil && e.baseURL != "" {
+		return e.baseURL
+	}
+	return qwenweb.BaseURL
+}
+func (e *QwenWebExecutor) Identifier() string { return qwenweb.Provider }
 func (e *QwenWebExecutor) RequestToFormat(_ execution.Request, opts execution.Options) translator.Format {
 	if opts.SourceFormat.String() == "openai-image" {
 		return opts.SourceFormat
@@ -39,8 +51,9 @@ func (e *QwenWebExecutor) PrepareRequest(req *http.Request, auth *coreauth.Auth)
 	if req == nil {
 		return fmt.Errorf("qwen-web: missing request")
 	}
-	// Never attach the session to another origin (including management APICall URLs).
-	if req.URL.Scheme != "https" || req.URL.Host != "chat.qwen.ai" {
+	// Never attach the session to another origin (including management APICall
+	// URLs). The loopback override exists only for tests.
+	if !e.allowsRequestURL(req.URL) {
 		return &qwenweb.Error{Code: 400, Message: "Qwen Web credentials can only be used with chat.qwen.ai"}
 	}
 	cookie, token := "", ""
@@ -62,6 +75,16 @@ func (e *QwenWebExecutor) PrepareRequest(req *http.Request, auth *coreauth.Auth)
 	req.Header = qwenweb.Headers(token, cookie)
 	return nil
 }
+func (e *QwenWebExecutor) allowsRequestURL(u *url.URL) bool {
+	if u == nil {
+		return false
+	}
+	if e != nil && e.baseURL != "" {
+		return u.String() == e.baseURL || strings.HasPrefix(u.String(), e.baseURL)
+	}
+	return u.Scheme == "https" && u.Host == "chat.qwen.ai"
+}
+
 func (e *QwenWebExecutor) HttpRequest(ctx context.Context, auth *coreauth.Auth, req *http.Request) (*http.Response, error) {
 	if req == nil {
 		return nil, fmt.Errorf("qwen-web: missing request")
@@ -78,12 +101,63 @@ func (e *QwenWebExecutor) HttpRequest(ctx context.Context, auth *coreauth.Auth, 
 	}
 	return resp, nil
 }
-func (e *QwenWebExecutor) Refresh(_ context.Context, auth *coreauth.Auth) (*coreauth.Auth, error) {
-	// No verified refresh grant exists. Expired sessions must be re-imported.
+
+// RefreshLead starts renewal a week before the 30-day session expires.
+func (e *QwenWebExecutor) RefreshLead() *time.Duration {
+	lead := 7 * 24 * time.Hour
+	return &lead
+}
+
+// Refresh slides the Qwen Web session forward.
+//
+// Qwen issues no refresh_token and exposes no dedicated refresh endpoint:
+// POST /api/v2/auths/refresh returns "not found" exactly like an arbitrary
+// unknown path. Instead the server re-issues the session token Cookie on
+// ordinary requests, and each re-issue sets exp = issue time + 30 days. Calling
+// the session endpoint is therefore enough to slide an active session forward,
+// matching what the real web frontend gets for free on every request.
+//
+// This cannot resurrect an expired session; once the deadline passes Qwen
+// returns 401 and the account must sign in again.
+func (e *QwenWebExecutor) Refresh(ctx context.Context, auth *coreauth.Auth) (*coreauth.Auth, error) {
 	if auth == nil {
 		return nil, fmt.Errorf("qwen-web: missing auth")
 	}
-	return auth, nil
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	updated := auth.Clone()
+	if updated.Metadata == nil {
+		updated.Metadata = map[string]any{}
+	}
+	resp, err := e.request(ctx, updated, http.MethodGet, "/api/v1/auths/", nil)
+	if err != nil {
+		return nil, err
+	}
+	defer closeQwenWebBody(resp.Body)
+	if _, errRead := io.Copy(io.Discard, io.LimitReader(resp.Body, 1<<20)); errRead != nil {
+		return nil, &qwenweb.Error{Code: 502, Message: "qwen-web: could not read session response"}
+	}
+	// The server re-issues the token on every call. Persist it only when it
+	// actually changed, so routine refreshes avoid rewriting the auth file.
+	if renewed := qwenweb.SessionCookie(resp.Cookies()); renewed != "" {
+		current, _ := updated.Metadata["cookie"].(string)
+		if renewed != current {
+			updated.Metadata["cookie"] = renewed
+		}
+		// Keep access_token in sync so the bearer fallback and the JWT-derived
+		// expiry stay accurate.
+		if token := qwenweb.CookieValue(renewed); token != "" {
+			if cur, _ := updated.Metadata["access_token"].(string); cur != token {
+				updated.Metadata["access_token"] = token
+			}
+		}
+	} else {
+		// No new Cookie means the session was not recognized; surface that
+		// instead of silently reporting success.
+		return nil, &qwenweb.Error{Code: 401, Message: "qwen-web: session was not renewed; sign in again"}
+	}
+	return updated, nil
 }
 func (e *QwenWebExecutor) CountTokens(context.Context, *coreauth.Auth, execution.Request, execution.Options) (execution.Response, error) {
 	return execution.Response{}, &qwenweb.Error{Code: 501, Message: "Qwen Web token counting is not supported"}
@@ -97,7 +171,7 @@ func (e *QwenWebExecutor) request(ctx context.Context, auth *coreauth.Auth, meth
 		}
 		reader = bytes.NewReader(raw)
 	}
-	req, err := http.NewRequestWithContext(ctx, method, qwenweb.BaseURL+path, reader)
+	req, err := http.NewRequestWithContext(ctx, method, e.base()+path, reader)
 	if err != nil {
 		return nil, &qwenweb.Error{Code: 400, Message: "invalid Qwen Web request"}
 	}

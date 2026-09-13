@@ -3,6 +3,7 @@ package qwenweb
 import (
 	"context"
 	"crypto/sha256"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
@@ -187,5 +188,31 @@ func TestPasswordLoginCapturesCookie(t *testing.T) {
 	}
 	if user.Token != "json-session" {
 		t.Fatalf("token = %q", user.Token)
+	}
+}
+
+func TestTokenExpiry(t *testing.T) {
+	// exp = 1791878393
+	token := "eyJhbGciOiJIUzI1NiJ9." + base64.RawURLEncoding.EncodeToString([]byte(`{"id":"a","exp":1791878393}`)) + ".sig"
+	got, ok := TokenExpiry(token)
+	if !ok || got.Unix() != 1791878393 {
+		t.Fatalf("TokenExpiry = %v %v", got, ok)
+	}
+	for _, bad := range []string{"", "not-a-jwt", "a.b", "a.b.c"} {
+		if _, ok := TokenExpiry(bad); ok {
+			t.Errorf("TokenExpiry(%q) should fail", bad)
+		}
+	}
+}
+
+func TestCookieValue(t *testing.T) {
+	if got := CookieValue("token=abc"); got != "abc" {
+		t.Fatalf("CookieValue = %q", got)
+	}
+	if got := CookieValue("qwen_token=abc; other=1"); got != "abc" {
+		t.Fatalf("CookieValue = %q", got)
+	}
+	if got := CookieValue("other=1"); got != "" {
+		t.Fatalf("CookieValue = %q", got)
 	}
 }
