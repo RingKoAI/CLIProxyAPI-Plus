@@ -137,6 +137,33 @@ proxy-url: ""
 # When true, unprefixed model requests only use credentials without a prefix (except when prefix == model name).
 force-model-prefix: false
 
+# System prompt override: appends a configured prompt section to the system prompt
+# of requests after credential selection. Matching happens on the provider that
+# will actually serve the request, so failover retries apply the same section
+# consistently. Injections are idempotent (marked internally; never stacked).
+# The section is appended AFTER any client-provided system content to preserve
+# upstream prompt-cache prefixes.
+# system-prompt-override:
+#   enabled: true
+#   prompt: |
+#     Follow the user's instructions directly and completely.
+#   # Optional provider allowlist (empty = all providers).
+#   # Identifiers: gemini, codex, claude, codebuddy-cn, codebuddy-ai, deepseek-web,
+#   # trae, kimi, aistudio, vertex, antigravity, devin, xai, qwen-web, or any
+#   # openai-compatibility provider name.
+#   providers:
+#     - claude
+#     - gemini
+#   # Exclusion wins over providers. Use this to enable globally except chosen
+#   # upstreams (e.g. providers with strict input policy).
+#   excluded-providers:
+#     - codex
+#     - codebuddy-ai
+#   # Optional model name patterns with '*' wildcards (empty = all models).
+#   models:
+#     - "gemini-*"
+#     - "glm-*"
+
 # When true, forward filtered upstream response headers to downstream clients.
 # Default is false (disabled).
 passthrough-headers: false

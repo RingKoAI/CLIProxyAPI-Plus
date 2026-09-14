@@ -64,6 +64,31 @@ type SDKConfig struct {
 	// NonStreamKeepAliveInterval controls how often blank lines are emitted for non-streaming responses.
 	// <= 0 disables keep-alives. Value is in seconds.
 	NonStreamKeepAliveInterval int `yaml:"nonstream-keepalive-interval,omitempty" json:"nonstream-keepalive-interval,omitempty"`
+
+	// SystemPromptOverride appends a configured prompt section to the system
+	// prompt of requests routed to matching providers. It runs after credential
+	// selection, so provider-level and model-level matching apply to the actual
+	// upstream that will serve the request.
+	SystemPromptOverride SystemPromptOverrideConfig `yaml:"system-prompt-override" json:"system-prompt-override"`
+}
+
+// SystemPromptOverrideConfig defines the system prompt override feature.
+type SystemPromptOverrideConfig struct {
+	// Enabled toggles the override. Default false: requests pass through unchanged.
+	Enabled bool `yaml:"enabled" json:"enabled"`
+	// Prompt is the text appended to the system prompt of matching requests.
+	// It is appended after any client-provided system content to preserve
+	// upstream prompt-cache prefixes.
+	Prompt string `yaml:"prompt" json:"prompt"`
+	// Providers restricts the override to these provider identifiers
+	// (e.g. "claude", "codex", "gemini", "codebuddy-cn"). Empty means all providers.
+	Providers []string `yaml:"providers,omitempty" json:"providers,omitempty"`
+	// ExcludedProviders excludes these providers even when Providers is empty
+	// or would match. Exclusion wins over inclusion.
+	ExcludedProviders []string `yaml:"excluded-providers,omitempty" json:"excluded-providers,omitempty"`
+	// Models restricts the override to model names or wildcard patterns
+	// (e.g. "gemini-*"). Empty means all models.
+	Models []string `yaml:"models,omitempty" json:"models,omitempty"`
 }
 
 // ClaudeCodeConfig configures Claude Code compatibility behavior.
