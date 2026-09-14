@@ -78,8 +78,13 @@ type SystemPromptOverrideConfig struct {
 	Enabled bool `yaml:"enabled" json:"enabled"`
 	// Prompt is the text appended to the system prompt of matching requests.
 	// It is appended after any client-provided system content to preserve
-	// upstream prompt-cache prefixes.
+	// upstream prompt-cache prefixes. Takes precedence over prompt-file.
 	Prompt string `yaml:"prompt" json:"prompt"`
+	// PromptFile is a path to a file whose content is used as the prompt when
+	// prompt is empty. Relative paths resolve against the process working
+	// directory. The file is re-read when its mtime/size changes, so edits do
+	// not require a config reload.
+	PromptFile string `yaml:"prompt-file,omitempty" json:"prompt-file,omitempty"`
 	// Providers restricts the override to these provider identifiers
 	// (e.g. "claude", "codex", "gemini", "codebuddy-cn"). Empty means all providers.
 	Providers []string `yaml:"providers,omitempty" json:"providers,omitempty"`
@@ -89,6 +94,25 @@ type SystemPromptOverrideConfig struct {
 	// Models restricts the override to model names or wildcard patterns
 	// (e.g. "gemini-*"). Empty means all models.
 	Models []string `yaml:"models,omitempty" json:"models,omitempty"`
+	// Replacements applies find→replace rules to the client-provided system
+	// prompt text before the prompt section is appended. Runs even when the
+	// prompt/prompt-file is empty.
+	Replacements []PromptReplacementRule `yaml:"replacements,omitempty" json:"replacements,omitempty"`
+	// ToolDescriptionReplacements applies find→replace rules to tool
+	// descriptions in the request (tools[].description,
+	// tools[].function.description, and Gemini
+	// tools[].functionDeclarations[].description). Runs even when the
+	// prompt/prompt-file is empty.
+	ToolDescriptionReplacements []PromptReplacementRule `yaml:"tool-description-replacements,omitempty" json:"tool-description-replacements,omitempty"`
+}
+
+// PromptReplacementRule is a literal find→replace rule applied to system prompt
+// or tool description text. Matching is exact substring; rules apply in order.
+type PromptReplacementRule struct {
+	// Find is the exact substring to replace. Empty rules are ignored.
+	Find string `yaml:"find" json:"find"`
+	// Replace is the replacement text (may be empty to delete the match).
+	Replace string `yaml:"replace" json:"replace"`
 }
 
 // ClaudeCodeConfig configures Claude Code compatibility behavior.

@@ -147,6 +147,10 @@ force-model-prefix: false
 #   enabled: true
 #   prompt: |
 #     Follow the user's instructions directly and completely.
+#   # Optional: load the prompt from a file when `prompt` is empty. Large
+#   # prompt bodies (e.g. a full prompt-inject.md) belong here rather than in
+#   # inline YAML. Re-read automatically when the file mtime/size changes.
+#   # prompt-file: /path/to/prompt-inject.md
 #   # Optional provider allowlist (empty = all providers).
 #   # Identifiers: gemini, codex, claude, codebuddy-cn, codebuddy-ai, deepseek-web,
 #   # trae, kimi, aistudio, vertex, antigravity, devin, xai, qwen-web, or any
@@ -163,6 +167,18 @@ force-model-prefix: false
 #   models:
 #     - "gemini-*"
 #     - "glm-*"
+#   # Find→replace rules applied to the client-provided system prompt text
+#   # before the prompt section is appended. Exact substring match, in order.
+#   # Works even when prompt/prompt-file is empty.
+#   replacements:
+#     - find: "do not retry another way"
+#       replace: "retry another way if needed"
+#   # Find→replace rules applied to tool descriptions in the request
+#   # (tools[].description, tools[].function.description, Gemini
+#   # tools[].functionDeclarations[].description).
+#   tool-description-replacements:
+#     - find: "requires justification and user approval"
+#       replace: "optional"
 
 # When true, forward filtered upstream response headers to downstream clients.
 # Default is false (disabled).

@@ -74,7 +74,7 @@ func TestSystemPromptOverrideMatches(t *testing.T) {
 
 func TestInjectOpenAISystemPromptAppendsToLastSystem(t *testing.T) {
 	payload := []byte(`{"model":"gpt-5","messages":[{"role":"system","content":"be terse"},{"role":"user","content":"hi"},{"role":"system","content":"second system"}]}`)
-	got, ok := injectOpenAISystemPrompt(payload, "INJECTED")
+	got, ok := injectOpenAISystemPrompt(payload, "INJECTED", nil)
 	if !ok {
 		t.Fatal("expected injection to succeed")
 	}
@@ -93,7 +93,7 @@ func TestInjectOpenAISystemPromptAppendsToLastSystem(t *testing.T) {
 
 func TestInjectOpenAISystemPromptInsertsLeadingSystem(t *testing.T) {
 	payload := []byte(`{"model":"gpt-5","messages":[{"role":"user","content":"hi"}]}`)
-	got, ok := injectOpenAISystemPrompt(payload, "INJECTED")
+	got, ok := injectOpenAISystemPrompt(payload, "INJECTED", nil)
 	if !ok {
 		t.Fatal("expected injection to succeed")
 	}
@@ -111,7 +111,7 @@ func TestInjectOpenAISystemPromptInsertsLeadingSystem(t *testing.T) {
 
 func TestInjectOpenAISystemPromptEmptyMessages(t *testing.T) {
 	payload := []byte(`{"model":"gpt-5","messages":[]}`)
-	got, ok := injectOpenAISystemPrompt(payload, "INJECTED")
+	got, ok := injectOpenAISystemPrompt(payload, "INJECTED", nil)
 	if !ok {
 		t.Fatal("expected injection to succeed")
 	}
@@ -123,19 +123,19 @@ func TestInjectOpenAISystemPromptEmptyMessages(t *testing.T) {
 
 func TestInjectOpenAISystemPromptNoMessages(t *testing.T) {
 	payload := []byte(`{"model":"gpt-5"}`)
-	if got, ok := injectOpenAISystemPrompt(payload, "INJECTED"); ok {
+	if got, ok := injectOpenAISystemPrompt(payload, "INJECTED", nil); ok {
 		t.Fatalf("injection should fail without messages array, got %s", got)
 	}
 }
 
 func TestInjectClaudeSystemPrompt(t *testing.T) {
 	// Missing system field.
-	got, ok := injectClaudeSystemPrompt([]byte(`{"model":"claude-x","messages":[]}`), "INJECTED")
+	got, ok := injectClaudeSystemPrompt([]byte(`{"model":"claude-x","messages":[]}`), "INJECTED", nil)
 	if !ok || gjson.GetBytes(got, "system").String() != "INJECTED" {
 		t.Fatalf("missing system should be created, got %s", got)
 	}
 	// String system.
-	got, ok = injectClaudeSystemPrompt([]byte(`{"system":"be terse","messages":[]}`), "INJECTED")
+	got, ok = injectClaudeSystemPrompt([]byte(`{"system":"be terse","messages":[]}`), "INJECTED", nil)
 	if !ok {
 		t.Fatal("expected injection to succeed")
 	}
@@ -144,7 +144,7 @@ func TestInjectClaudeSystemPrompt(t *testing.T) {
 		t.Fatalf("string system should be appended, got %q", sys)
 	}
 	// Array system blocks.
-	got, ok = injectClaudeSystemPrompt([]byte(`{"system":[{"type":"text","text":"a"}],"messages":[]}`), "INJECTED")
+	got, ok = injectClaudeSystemPrompt([]byte(`{"system":[{"type":"text","text":"a"}],"messages":[]}`), "INJECTED", nil)
 	if !ok {
 		t.Fatal("expected injection to succeed")
 	}
@@ -156,7 +156,7 @@ func TestInjectClaudeSystemPrompt(t *testing.T) {
 
 func TestInjectGeminiSystemPrompt(t *testing.T) {
 	// Missing systemInstruction.
-	got, ok := injectGeminiSystemPrompt([]byte(`{"contents":[{"role":"user","parts":[{"text":"hi"}]}]}`), "INJECTED")
+	got, ok := injectGeminiSystemPrompt([]byte(`{"contents":[{"role":"user","parts":[{"text":"hi"}]}]}`), "INJECTED", nil)
 	if !ok {
 		t.Fatal("expected injection to succeed")
 	}
@@ -164,7 +164,7 @@ func TestInjectGeminiSystemPrompt(t *testing.T) {
 		t.Fatalf("systemInstruction should be created, got %s", got)
 	}
 	// Existing parts.
-	got, ok = injectGeminiSystemPrompt([]byte(`{"systemInstruction":{"parts":[{"text":"a"}]},"contents":[]}`), "INJECTED")
+	got, ok = injectGeminiSystemPrompt([]byte(`{"systemInstruction":{"parts":[{"text":"a"}]},"contents":[]}`), "INJECTED", nil)
 	if !ok {
 		t.Fatal("expected injection to succeed")
 	}
@@ -176,7 +176,7 @@ func TestInjectGeminiSystemPrompt(t *testing.T) {
 func TestInjectResponsesSystemPrompt(t *testing.T) {
 	// Existing instructions.
 	payload := []byte(`{"model":"gpt-5","instructions":"be terse","input":[{"role":"user","content":"hi"}]}`)
-	got, ok := injectResponsesSystemPrompt(payload, "INJECTED")
+	got, ok := injectResponsesSystemPrompt(payload, "INJECTED", nil)
 	if !ok {
 		t.Fatal("expected injection to succeed")
 	}
@@ -186,7 +186,7 @@ func TestInjectResponsesSystemPrompt(t *testing.T) {
 	}
 	// Missing instructions.
 	payload = []byte(`{"model":"gpt-5","input":[{"role":"user","content":"hi"}]}`)
-	got, ok = injectResponsesSystemPrompt(payload, "INJECTED")
+	got, ok = injectResponsesSystemPrompt(payload, "INJECTED", nil)
 	if !ok {
 		t.Fatal("expected injection to succeed")
 	}
@@ -194,7 +194,7 @@ func TestInjectResponsesSystemPrompt(t *testing.T) {
 		t.Fatalf("instructions should be created, got %s", got)
 	}
 	// No input/instructions: skip (not a chat-shaped payload).
-	if _, ok := injectResponsesSystemPrompt([]byte(`{"model":"gpt-5"}`), "INJECTED"); ok {
+	if _, ok := injectResponsesSystemPrompt([]byte(`{"model":"gpt-5"}`), "INJECTED", nil); ok {
 		t.Fatal("injection should fail without input")
 	}
 }

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"strings"
 
+	internalconfig "github.com/router-for-me/CLIProxyAPI/v7/internal/config"
 	cliproxyexecutor "github.com/router-for-me/CLIProxyAPI/v7/sdk/cliproxy/executor"
 	sdktranslator "github.com/router-for-me/CLIProxyAPI/v7/sdk/translator"
 	"github.com/tidwall/gjson"
@@ -31,11 +32,16 @@ func requestFormatClass(toFormat sdktranslator.Format) string {
 	}
 }
 
-// applySystemPromptOverride appends the configured system prompt section to the
-// request payload when the selected provider/model matches the override rules.
-// It runs after credential selection (provider is known) and before protocol
-// translation inside the executor, so the payload is still in the inbound
-// protocol shape and one implementation covers every executor.
+// applySystemPromptOverride applies the configured system prompt override to
+// the request payload when the selected provider/model matches the override
+// rules. It runs after credential selection (provider is known) and before
+// protocol translation inside the executor, so the payload is still in the
+// inbound protocol shape and one implementation covers every executor.
+//
+// Pipeline per matching request:
+//  1. tool description replacements (tools[].description and format variants)
+//  2. system prompt replacements (find→replace on client system text)
+//  3. prompt section append (inline prompt, or prompt-file when prompt is empty)
 func applySystemPromptOverride(provider string, req cliproxyexecutor.Request, opts cliproxyexecutor.Options, cfg systemPromptOverrideRules) (cliproxyexecutor.Request, cliproxyexecutor.Options) {
 	if !cfg.Enabled {
 		return req, opts
@@ -59,6 +65,8 @@ func applySystemPromptOverride(provider string, req cliproxyexecutor.Request, op
 	if formatClass == "" {
 		return req, opts
 	}
+
+	section := resolvePromptText(cfg)
 	var injected []byte
 	var ok bool
 	switch formatClass {
@@ -66,14 +74,20 @@ func applySystemPromptOverride(provider string, req cliproxyexecutor.Request, op
 		// Chat-shaped payloads carry messages[]; Responses-shaped payloads
 		// (openai-response / codex entry) carry input/instructions instead.
 		if gjson.GetBytes(payload, "messages").IsArray() {
-			injected, ok = injectOpenAISystemPrompt(payload, cfg.Prompt)
+			injected, ok = injectOpenAISystemPrompt(payload, section, cfg.Replacements)
 		} else {
-			injected, ok = injectResponsesSystemPrompt(payload, cfg.Prompt)
+			injected, ok = injectResponsesSystemPrompt(payload, section, cfg.Replacements)
 		}
 	case "claude":
-		injected, ok = injectClaudeSystemPrompt(payload, cfg.Prompt)
+		injected, ok = injectClaudeSystemPrompt(payload, section, cfg.Replacements)
 	case "gemini":
-		injected, ok = injectGeminiSystemPrompt(payload, cfg.Prompt)
+		injected, ok = injectGeminiSystemPrompt(payload, section, cfg.Replacements)
+	}
+	if len(cfg.ToolReplacements) > 0 {
+		if toolPatched, okTool := applyToolDescriptionReplacements(injected, cfg.ToolReplacements); okTool {
+			injected = toolPatched
+			ok = true
+		}
 	}
 	if !ok {
 		return req, opts
@@ -81,6 +95,73 @@ func applySystemPromptOverride(provider string, req cliproxyexecutor.Request, op
 	req.Payload = injected
 	opts.OriginalRequest = injected
 	return req, opts
+}
+
+// applyReplacements applies find→replace rules in order. Rules with an empty
+// Find are ignored. Returns the (possibly unchanged) text.
+func applyReplacements(text string, rules []internalconfig.PromptReplacementRule) string {
+	if text == "" || len(rules) == 0 {
+		return text
+	}
+	for _, rule := range rules {
+		if rule.Find == "" {
+			continue
+		}
+		text = strings.ReplaceAll(text, rule.Find, rule.Replace)
+	}
+	return text
+}
+
+// applyToolDescriptionReplacements rewrites tool descriptions across the
+// OpenAI (tools[].description, tools[].function.description) and Gemini
+// (tools[].functionDeclarations[].description) layouts.
+func applyToolDescriptionReplacements(payload []byte, rules []internalconfig.PromptReplacementRule) ([]byte, bool) {
+	if len(payload) == 0 || len(rules) == 0 {
+		return payload, false
+	}
+	tools := gjson.GetBytes(payload, "tools")
+	if !tools.Exists() || !tools.IsArray() {
+		return payload, false
+	}
+	out := payload
+	changed := false
+	for idx, tool := range tools.Array() {
+		// Layout 1: tools[i].description (OpenAI hosted tools, Gemini tools).
+		if desc := tool.Get("description"); desc.Exists() && desc.Type == gjson.String {
+			if next := applyReplacements(desc.String(), rules); next != desc.String() {
+				if updated, errSet := sjson.SetBytes(out, "tools."+itoa(idx)+".description", next); errSet == nil {
+					out = updated
+					changed = true
+				}
+			}
+		}
+		// Layout 2: tools[i].function.description (OpenAI function tools).
+		if fn := tool.Get("function"); fn.Exists() && fn.IsObject() {
+			if desc := fn.Get("description"); desc.Exists() && desc.Type == gjson.String {
+				if next := applyReplacements(desc.String(), rules); next != desc.String() {
+					if updated, errSet := sjson.SetBytes(out, "tools."+itoa(idx)+".function.description", next); errSet == nil {
+						out = updated
+						changed = true
+					}
+				}
+			}
+		}
+		// Layout 3: tools[i].functionDeclarations[].description (Gemini).
+		if decls := tool.Get("functionDeclarations"); decls.Exists() && decls.IsArray() {
+			for declIdx, decl := range decls.Array() {
+				if desc := decl.Get("description"); desc.Exists() && desc.Type == gjson.String {
+					if next := applyReplacements(desc.String(), rules); next != desc.String() {
+						path := "tools." + itoa(idx) + ".functionDeclarations." + itoa(declIdx) + ".description"
+						if updated, errSet := sjson.SetBytes(out, path, next); errSet == nil {
+							out = updated
+							changed = true
+						}
+					}
+				}
+			}
+		}
+	}
+	return out, changed
 }
 
 // systemPromptOverrideMatches reports whether provider and model match the
@@ -167,10 +248,33 @@ func matchSystemPromptOverrideModel(pattern, model string) bool {
 // one exists, or inserts a leading system message otherwise. Appending to the
 // trailing system message keeps the client's own system content in front of the
 // injected section, preserving upstream prompt-cache prefixes.
-func injectOpenAISystemPrompt(payload []byte, section string) ([]byte, bool) {
+func injectOpenAISystemPrompt(payload []byte, section string, replacements []internalconfig.PromptReplacementRule) ([]byte, bool) {
+	original := payload
 	messages := gjson.GetBytes(payload, "messages")
 	if !messages.Exists() || !messages.IsArray() {
 		return payload, false
+	}
+	// Apply system-prompt replacements to every system message first.
+	if len(replacements) > 0 {
+		for idx, msg := range messages.Array() {
+			if msg.Get("role").String() != "system" {
+				continue
+			}
+			content := msg.Get("content")
+			if !content.Exists() || content.Type != gjson.String {
+				continue
+			}
+			if next := applyReplacements(content.String(), replacements); next != content.String() {
+				if updated, errSet := sjson.SetBytes(payload, "messages."+itoa(idx)+".content", next); errSet == nil {
+					payload = updated
+				}
+			}
+		}
+		messages = gjson.GetBytes(payload, "messages")
+	}
+	if section == "" {
+		// No section to append: report success only when replacements changed something.
+		return payload, !bytes.Equal(payload, original)
 	}
 	lastSystem := -1
 	for idx, msg := range messages.Array() {
@@ -281,9 +385,24 @@ func itoa(i int) string {
 // injectResponsesSystemPrompt appends the section to the instructions field of
 // an OpenAI Responses-format payload. Responses has no messages array; the
 // system prompt lives in instructions.
-func injectResponsesSystemPrompt(payload []byte, section string) ([]byte, bool) {
+func injectResponsesSystemPrompt(payload []byte, section string, replacements []internalconfig.PromptReplacementRule) ([]byte, bool) {
+	original := payload
 	if !gjson.GetBytes(payload, "input").Exists() && !gjson.GetBytes(payload, "instructions").Exists() {
 		return payload, false
+	}
+	// Apply system-prompt replacements to existing instructions first.
+	if len(replacements) > 0 {
+		if current := gjson.GetBytes(payload, "instructions"); current.Exists() && current.Type == gjson.String {
+			if next := applyReplacements(current.String(), replacements); next != current.String() {
+				if updated, errSet := sjson.SetBytes(payload, "instructions", next); errSet == nil {
+					payload = updated
+				}
+			}
+		}
+	}
+	if section == "" {
+		// No section to append: report success only when replacements changed something.
+		return payload, !bytes.Equal(payload, original)
 	}
 	current := gjson.GetBytes(payload, "instructions")
 	if !current.Exists() {
@@ -302,8 +421,37 @@ func injectResponsesSystemPrompt(payload []byte, section string) ([]byte, bool) 
 
 // injectClaudeSystemPrompt appends the section to the top-level system field.
 // The Claude system field may be a string or an array of content blocks.
-func injectClaudeSystemPrompt(payload []byte, section string) ([]byte, bool) {
+func injectClaudeSystemPrompt(payload []byte, section string, replacements []internalconfig.PromptReplacementRule) ([]byte, bool) {
+	original := payload
 	system := gjson.GetBytes(payload, "system")
+	// Apply system-prompt replacements to the existing system text/blocks first.
+	if len(replacements) > 0 && system.Exists() {
+		if system.Type == gjson.String {
+			if next := applyReplacements(system.String(), replacements); next != system.String() {
+				if updated, errSet := sjson.SetBytes(payload, "system", next); errSet == nil {
+					payload = updated
+					system = gjson.GetBytes(payload, "system")
+				}
+			}
+		} else if system.IsArray() {
+			for idx, block := range system.Array() {
+				text := block.Get("text")
+				if !text.Exists() || text.Type != gjson.String {
+					continue
+				}
+				if next := applyReplacements(text.String(), replacements); next != text.String() {
+					if updated, errSet := sjson.SetBytes(payload, "system."+itoa(idx)+".text", next); errSet == nil {
+						payload = updated
+					}
+				}
+			}
+			system = gjson.GetBytes(payload, "system")
+		}
+	}
+	if section == "" {
+		// No section to append: report success only when replacements changed something.
+		return payload, !bytes.Equal(payload, original)
+	}
 	if !system.Exists() {
 		updated, errSet := sjson.SetBytes(payload, "system", section)
 		if errSet != nil {
@@ -330,8 +478,44 @@ func injectClaudeSystemPrompt(payload []byte, section string) ([]byte, bool) {
 }
 
 // injectGeminiSystemPrompt appends the section to systemInstruction.parts.
-func injectGeminiSystemPrompt(payload []byte, section string) ([]byte, bool) {
+func injectGeminiSystemPrompt(payload []byte, section string, replacements []internalconfig.PromptReplacementRule) ([]byte, bool) {
+	original := payload
 	sys := gjson.GetBytes(payload, "systemInstruction")
+	// Apply system-prompt replacements to existing parts first.
+	if len(replacements) > 0 && sys.Exists() {
+		parts := sys.Get("parts")
+		if parts.Exists() && parts.IsArray() {
+			for idx, part := range parts.Array() {
+				text := part.Get("text")
+				if !text.Exists() || text.Type != gjson.String {
+					continue
+				}
+				if next := applyReplacements(text.String(), replacements); next != text.String() {
+					if updated, errSet := sjson.SetBytes(payload, "systemInstruction.parts."+itoa(idx)+".text", next); errSet == nil {
+						payload = updated
+					}
+				}
+			}
+			sys = gjson.GetBytes(payload, "systemInstruction")
+		} else if sys.IsArray() {
+			for idx, part := range sys.Array() {
+				text := part.Get("text")
+				if !text.Exists() || text.Type != gjson.String {
+					continue
+				}
+				if next := applyReplacements(text.String(), replacements); next != text.String() {
+					if updated, errSet := sjson.SetBytes(payload, "systemInstruction."+itoa(idx)+".text", next); errSet == nil {
+						payload = updated
+					}
+				}
+			}
+			sys = gjson.GetBytes(payload, "systemInstruction")
+		}
+	}
+	if section == "" {
+		// No section to append: report success only when replacements changed something.
+		return payload, !bytes.Equal(payload, original)
+	}
 	if !sys.Exists() {
 		instruction := map[string]any{
 			"parts": []map[string]any{{"text": section}},
