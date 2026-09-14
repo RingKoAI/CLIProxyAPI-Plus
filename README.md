@@ -4,6 +4,29 @@
 
 管理前端仓库：[Cli-Proxy-API-Management-Center](https://github.com/rizxfrog/Cli-Proxy-API-Management-Center)（Web 管理面板，对应本服务的 Management API）。
 
+## 支持的 Provider
+
+| Provider | 标识 | 认证方式 | 说明 |
+|---|---|---|---|
+| Gemini | `gemini` | API Key | Google Gemini，配置 `gemini-api-key` |
+| Gemini Interactions | `gemini-interactions` | API Key | 原生 Google Interactions API，配置 `interactions-api-key` |
+| Vertex AI | `vertex` | API Key | 配置 `vertex-api-key` |
+| AI Studio | `aistudio` | WebSocket 中继 | 通过内置 WS 中继接入（运行时注册，无需配置） |
+| Antigravity | `antigravity` | OAuth | `--antigravity-login` |
+| Claude | `claude` | OAuth / API Key | `--claude-login` 或 `claude-api-key` |
+| Codex (OpenAI) | `codex` | OAuth / API Key | `--codex-login`、`--codex-device-login` 或 `codex-api-key` |
+| xAI (Grok) | `xai` | OAuth / API Key | `--xai-login` 或 `xai-api-key` |
+| Kimi | `kimi` | OAuth | `--kimi-login` |
+| CodeBuddy 中国版 | `codebuddy-cn` | OAuth / API Key | `--codebuddy-cn-login` 或 `codebuddy-cn-api-key`（网关 `copilot.tencent.com`） |
+| CodeBuddy 国际版 | `codebuddy-ai` | OAuth / API Key | `--codebuddy-ai-login` 或 `codebuddy-ai-api-key`（网关 `www.codebuddy.ai`） |
+| Devin | `devin` | OAuth | `--devin-login` |
+| TRAE SOLO CN | `trae` | 桌面端凭据 | 配置 `trae-api-key`；登录通过管理面板发起 |
+| DeepSeek Web | `deepseek-web` | 浏览器会话 | 配置 `deepseek-web-api-key`（从 chat.deepseek.com 复制 userToken） |
+| Qwen Web | `qwen-web` | 网页登录 | 通过管理面板 Web 登录接入 |
+| OpenAI 兼容 | `openai-compatibility` | API Key | 任意 OpenAI 兼容端点，配置 `openai-compatibility` |
+
+> 具体字段与示例见 `config.example.yaml` 注释。
+
 ## 快速开始
 
 ### 1. 准备配置文件
@@ -37,7 +60,7 @@ go build -o cli-proxy-api ./cmd/server
 | `--standalone` | TUI 模式下内嵌启动本地服务 |
 | `--local-model` | 只使用内置模型表，不从远端更新 |
 | `--no-browser` | OAuth 登录时不自动打开浏览器 |
-| `--claude-login` / `--codex-login` / `--codex-device-login` / `--antigravity-login` / `--kimi-login` / `--codebuddy-cn-login` / `--codebuddy-ai-login` / `--xai-login` | 对应厂商的 OAuth 登录流程 |
+| `--claude-login` / `--codex-login` / `--codex-device-login` / `--antigravity-login` / `--kimi-login` / `--codebuddy-cn-login` / `--codebuddy-ai-login` / `--xai-login` / `--devin-login` | 对应厂商的 OAuth 登录流程 |
 
 ### 3. 添加账号
 
