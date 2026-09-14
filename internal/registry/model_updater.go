@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"reflect"
 	"strings"
 	"sync"
 	"time"
@@ -257,6 +258,7 @@ func detectChangedProviders(oldData, newData *staticModelsJSON) []string {
 		{"codebuddy-ai", oldData.CodeBuddyAI, newData.CodeBuddyAI},
 		{"deepseek-web", oldData.DeepSeekWeb, newData.DeepSeekWeb},
 		{"xai", oldData.XAI, newData.XAI},
+		{"devin", oldData.Devin, newData.Devin},
 	}
 
 	seen := make(map[string]bool, len(sections))
@@ -273,13 +275,19 @@ func detectChangedProviders(oldData, newData *staticModelsJSON) []string {
 	return changed
 }
 
-// modelSectionChanged reports whether two model slices differ.
+// modelSectionChanged reports whether two model slices differ, including
+// internal metadata that is intentionally omitted from normal JSON responses.
 func modelSectionChanged(a, b []*ModelInfo) bool {
 	if len(a) != len(b) {
 		return true
 	}
 	if len(a) == 0 {
 		return false
+	}
+	for i := range a {
+		if a[i] != nil && b[i] != nil && !reflect.DeepEqual(a[i].NativeCapabilities, b[i].NativeCapabilities) {
+			return true
+		}
 	}
 	aj, err1 := json.Marshal(a)
 	bj, err2 := json.Marshal(b)

@@ -200,6 +200,9 @@ func (s *Service) registerModelsForAuthWithCache(ctx context.Context, a *coreaut
 			}
 		}
 		models = applyExcludedModels(models, excluded)
+	case "devin":
+		models = registry.GetDevinModels()
+		models = applyExcludedModels(models, excluded)
 	default:
 		// Handle OpenAI-compatibility providers by name using config
 		if s.cfg != nil {
@@ -250,11 +253,11 @@ func (s *Service) registerModelsForAuthWithCache(ctx context.Context, a *coreaut
 				}
 				if len(ms) > 0 {
 					ms = s.appendPluginModels(providerKey, ms)
-					s.registerResolvedModelsForAuth(a, providerKey, applyModelPrefixes(ms, a.Prefix))
+					s.registerResolvedModelsForAuth(a, providerKey, applyModelPrefixes(ms, a.Prefix, s.cfg.ForceModelPrefix))
 				} else {
 					ms = s.appendPluginModels(providerKey, nil)
 					if len(ms) > 0 {
-						s.registerResolvedModelsForAuth(a, providerKey, applyModelPrefixes(ms, a.Prefix))
+						s.registerResolvedModelsForAuth(a, providerKey, applyModelPrefixes(ms, a.Prefix, s.cfg.ForceModelPrefix))
 					} else {
 						GlobalModelRegistry().UnregisterClient(a.ID)
 					}
@@ -272,11 +275,11 @@ func (s *Service) registerModelsForAuthWithCache(ctx context.Context, a *coreaut
 				ms := cached.models
 				if len(ms) > 0 {
 					ms = s.appendPluginModels(providerKey, ms)
-					s.registerResolvedModelsForAuth(a, providerKey, applyModelPrefixes(ms, a.Prefix))
+					s.registerResolvedModelsForAuth(a, providerKey, applyModelPrefixes(ms, a.Prefix, s.cfg.ForceModelPrefix))
 				} else {
 					ms = s.appendPluginModels(providerKey, nil)
 					if len(ms) > 0 {
-						s.registerResolvedModelsForAuth(a, providerKey, applyModelPrefixes(ms, a.Prefix))
+						s.registerResolvedModelsForAuth(a, providerKey, applyModelPrefixes(ms, a.Prefix, s.cfg.ForceModelPrefix))
 					} else {
 						GlobalModelRegistry().UnregisterClient(a.ID)
 					}
@@ -295,7 +298,7 @@ func (s *Service) registerModelsForAuthWithCache(ctx context.Context, a *coreaut
 			if isCompatAuth {
 				models = s.appendPluginModels(providerKey, nil)
 				if len(models) > 0 {
-					s.registerResolvedModelsForAuth(a, providerKey, applyModelPrefixes(models, a.Prefix))
+					s.registerResolvedModelsForAuth(a, providerKey, applyModelPrefixes(models, a.Prefix, s.cfg != nil && s.cfg.ForceModelPrefix))
 				} else {
 					// No matching provider found or models removed entirely; drop any prior registration.
 					GlobalModelRegistry().UnregisterClient(a.ID)
@@ -317,7 +320,7 @@ func (s *Service) registerModelsForAuthWithCache(ctx context.Context, a *coreaut
 	}
 	models = s.appendPluginModels(key, models)
 	if len(models) > 0 {
-		s.registerResolvedModelsForAuth(a, key, applyModelPrefixes(models, a.Prefix))
+		s.registerResolvedModelsForAuth(a, key, applyModelPrefixes(models, a.Prefix, s.cfg != nil && s.cfg.ForceModelPrefix))
 		if strings.EqualFold(strings.TrimSpace(a.Provider), "antigravity") {
 			s.asyncProbeAntigravityCapabilities(ctx, a, key)
 		}
@@ -659,13 +662,22 @@ func applyExcludedModels(models []*ModelInfo, excluded []string) []*ModelInfo {
 	return filtered
 }
 
-// applyModelPrefixes exposes an alias form for each model in addition to its
-// provider-native name. The alias is "<prefix>/<name>" and is used to target a
-// specific credential. Both the native name and the alias are always
-// registered: the registry is the capability catalog, and restricting which
 // names a client may call is an access decision made by auth selection (see
 // Manager.authSupportsRouteModel), not by omitting registrations here.
-func applyModelPrefixes(models []*ModelInfo, prefix string) []*ModelInfo {
+func cloneModelInfoForCatalogRoute(model *ModelInfo) ModelInfo {
+	clone := *model
+	if model.NativeCapabilities != nil {
+		capabilities := *model.NativeCapabilities
+		if model.NativeCapabilities.WebSearch != nil {
+			webSearch := *model.NativeCapabilities.WebSearch
+			capabilities.WebSearch = &webSearch
+		}
+		clone.NativeCapabilities = &capabilities
+	}
+	return clone
+}
+
+func applyModelPrefixes(models []*ModelInfo, prefix string, forceModelPrefix bool) []*ModelInfo {
 	trimmedPrefix := strings.TrimSpace(prefix)
 	if trimmedPrefix == "" || len(models) == 0 {
 		return models
@@ -697,12 +709,10 @@ func applyModelPrefixes(models []*ModelInfo, prefix string) []*ModelInfo {
 		if baseID == "" {
 			continue
 		}
-		// The native name is the canonical capability definition and stays
-		// registered so capability lookups (thinking, limits, ...) resolve even
-		// when the client is required to call the alias.
-		addModel(model)
-		// The alias shares the exact same capability definition.
-		clone := *model
+		if !forceModelPrefix || trimmedPrefix == baseID {
+			addModel(model)
+		}
+		clone := cloneModelInfoForCatalogRoute(model)
 		clone.ID = trimmedPrefix + "/" + baseID
 		if clone.MetadataModelID == "" {
 			clone.MetadataModelID = baseID
@@ -872,7 +882,7 @@ func normalizeCompatConfigModalities(raw []string) []string {
 	return out
 }
 
-func buildConfigModels[T modelEntry](models []T, ownedBy, modelType string) []*ModelInfo {
+func buildConfigModels[T modelEntry](models []T, ownedBy, modelType, metadataChannel string) []*ModelInfo {
 	if len(models) == 0 {
 		return nil
 	}
@@ -898,6 +908,9 @@ func buildConfigModels[T modelEntry](models []T, ownedBy, modelType string) []*M
 		if resolved := modelconfig.ResolveModelInfo(name, modelType, model.GetThinking()); resolved.Thinking != nil {
 			info.Thinking = resolved.Thinking
 		}
+		if staticInfo := registry.LookupStaticModelInfoByChannel(name, metadataChannel); staticInfo != nil && staticInfo.NativeCapabilities != nil {
+			info.NativeCapabilities = cloneModelInfoForCatalogRoute(staticInfo).NativeCapabilities
+		}
 		out = append(out, info)
 	}
 	return out
@@ -907,56 +920,56 @@ func buildVertexCompatConfigModels(entry *config.VertexCompatKey) []*ModelInfo {
 	if entry == nil {
 		return nil
 	}
-	return buildConfigModels(entry.Models, "google", "vertex")
+	return buildConfigModels(entry.Models, "google", "vertex", "vertex")
 }
 
 func buildGeminiConfigModels(entry *config.GeminiKey) []*ModelInfo {
 	if entry == nil {
 		return nil
 	}
-	return buildConfigModels(entry.Models, "google", "gemini")
+	return buildConfigModels(entry.Models, "google", "gemini", "gemini")
 }
 
 func buildClaudeConfigModels(entry *config.ClaudeKey) []*ModelInfo {
 	if entry == nil {
 		return nil
 	}
-	return buildConfigModels(entry.Models, "anthropic", "claude")
+	return buildConfigModels(entry.Models, "anthropic", "claude", "claude")
 }
 
 func buildXAIConfigModels(entry *config.XAIKey) []*ModelInfo {
 	if entry == nil {
 		return nil
 	}
-	return buildConfigModels(entry.Models, "xai", "xai")
+	return buildConfigModels(entry.Models, "xai", "xai", "xai")
 }
 
 func buildTraeConfigModels(entry *config.TraeKey) []*ModelInfo {
 	if entry == nil {
 		return nil
 	}
-	return buildConfigModels(entry.Models, constant.Trae, "openai")
+	return buildConfigModels(entry.Models, constant.Trae, "openai", constant.Trae)
 }
 
 func buildCodeBuddyCNConfigModels(entry *config.CodeBuddyCNKey) []*ModelInfo {
 	if entry == nil {
 		return nil
 	}
-	return buildConfigModels(entry.Models, constant.CodeBuddyCN, "openai")
+	return buildConfigModels(entry.Models, constant.CodeBuddyCN, "openai", constant.CodeBuddyCN)
 }
 
 func buildCodeBuddyAIConfigModels(entry *config.CodeBuddyAIKey) []*ModelInfo {
 	if entry == nil {
 		return nil
 	}
-	return buildConfigModels(entry.Models, constant.CodeBuddyAI, "openai")
+	return buildConfigModels(entry.Models, constant.CodeBuddyAI, "openai", constant.CodeBuddyAI)
 }
 
 func buildDeepSeekWebConfigModels(entry *config.DeepSeekWebKey) []*ModelInfo {
 	if entry == nil {
 		return nil
 	}
-	return buildConfigModels(entry.Models, constant.DeepSeekWeb, "openai")
+	return buildConfigModels(entry.Models, constant.DeepSeekWeb, "openai", constant.DeepSeekWeb)
 }
 
 func (s *Service) resolveConfigDeepSeekWebKey(auth *coreauth.Auth) *config.DeepSeekWebKey {
@@ -1019,7 +1032,7 @@ func buildCodexConfigModels(entry *config.CodexKey) []*ModelInfo {
 		return registry.GetCodexProModels()
 	}
 
-	models := buildConfigModels(entry.Models, "openai", "openai")
+	models := buildConfigModels(entry.Models, "openai", "openai", "codex")
 	configuredDisplayNames := make(map[string]string, len(entry.Models))
 	seenConfiguredModels := make(map[string]struct{}, len(entry.Models))
 	for i := range entry.Models {
@@ -1208,7 +1221,7 @@ func applyOAuthModelAliasEntries(aliases []config.OAuthModelAlias, models []*Mod
 				continue
 			}
 			seen[aliasKey] = struct{}{}
-			clone := *model
+			clone := cloneModelInfoForCatalogRoute(model)
 			clone.ID = mappedID
 			if model.MetadataModelID != "" {
 				clone.MetadataModelID = model.MetadataModelID

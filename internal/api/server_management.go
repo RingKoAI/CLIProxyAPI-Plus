@@ -202,6 +202,7 @@ func (s *Server) registerManagementRoutes() {
 		mgmt.POST("/web-login/qwen-web", s.mgmt.LoginQwenWeb)
 		mgmt.GET("/trae-auth-url", s.mgmt.RequestTraeToken)
 		mgmt.POST("/trae-auth-callback", s.mgmt.PostTraeAuthCallback)
+		mgmt.GET("/devin-auth-url", s.mgmt.RequestDevinToken)
 		mgmt.GET("/get-auth-status", s.mgmt.GetAuthStatus)
 		mgmt.DELETE("/oauth-session", s.mgmt.CancelAuthSession)
 	}
