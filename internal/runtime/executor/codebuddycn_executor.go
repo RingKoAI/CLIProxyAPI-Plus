@@ -264,10 +264,62 @@ func applyCodeBuddyCNOutgoingTransforms(ctx context.Context, auth *cliproxyauth.
 	return applyCodeBuddyOutgoingTransforms(translated)
 }
 
-// applyCodeBuddyAIOutgoingTransforms applies the same body normalization the
-// international CodeBuddy AI gateway requires (shared with CodeBuddy CN).
+// applyCodeBuddyAIOutgoingTransforms applies the international CodeBuddy AI
+// gateway requirements: the shared body normalization (forced streaming,
+// reasoning mirroring, agent-prompt neutralization) plus the gateway-specific
+// requirement that the first chat message be a system prompt.
+//
+// https://www.codebuddy.ai rejects requests whose first message is not role
+// "system" with HTTP 400 code 11128. When the translated body has no leading
+// system message, the official CLI agent system prompt is injected so the
+// request satisfies the gateway contract.
 func applyCodeBuddyAIOutgoingTransforms(ctx context.Context, auth *cliproxyauth.Auth, baseModel string, opts cliproxyexecutor.Options, translated []byte) []byte {
-	return applyCodeBuddyOutgoingTransforms(translated)
+	body := applyCodeBuddyOutgoingTransforms(translated)
+	return injectCodeBuddyAISystemPrompt(body, baseModel)
+}
+
+// injectCodeBuddyAISystemPrompt ensures the request's first message is a system
+// prompt. It is a no-op when a leading system message already exists, or when the
+// body has no messages array at all.
+func injectCodeBuddyAISystemPrompt(body []byte, baseModel string) []byte {
+	if len(body) == 0 {
+		return body
+	}
+	messages := gjson.GetBytes(body, "messages")
+	if !messages.Exists() || !messages.IsArray() {
+		return body
+	}
+	original := messages.Array()
+	if len(original) > 0 && strings.EqualFold(strings.TrimSpace(original[0].Get("role").String()), "system") {
+		return body
+	}
+
+	prompt := helps.RenderCodeBuddyAISystemPrompt(helps.CodeBuddyAISystemPromptOptions{
+		ModelID: strings.TrimSpace(baseModel),
+	})
+	systemEntry, errMarshal := json.Marshal(map[string]any{
+		"role":    "system",
+		"content": prompt,
+	})
+	if errMarshal != nil {
+		return body
+	}
+
+	// Prepend the system message while preserving the original message objects.
+	combined := make([]byte, 0, len(systemEntry)+len(messages.Raw)+len(original)+2)
+	combined = append(combined, '[')
+	combined = append(combined, systemEntry...)
+	for _, item := range original {
+		combined = append(combined, ',')
+		combined = append(combined, item.Raw...)
+	}
+	combined = append(combined, ']')
+
+	updated, errSet := sjson.SetRawBytes(body, "messages", combined)
+	if errSet != nil {
+		return body
+	}
+	return updated
 }
 
 func applyCodeBuddyOutgoingTransforms(translated []byte) []byte {

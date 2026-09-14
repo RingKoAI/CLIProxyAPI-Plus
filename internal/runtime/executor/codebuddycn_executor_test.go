@@ -212,3 +212,14 @@ func TestAggregateCodeBuddyCNChunksToolCalls(t *testing.T) {
 		t.Fatalf("finish_reason=%q, want tool_calls (body=%s)", fr, got)
 	}
 }
+
+// The international (codebuddy-ai) gateway requires a leading system message,
+// but the CN gateway does not; the CN transform must therefore not inject one.
+func TestCodeBuddyCNTransformDoesNotInjectSystemPrompt(t *testing.T) {
+	body := []byte(`{"model":"hy3","messages":[{"role":"user","content":"hi"}]}`)
+	got := applyCodeBuddyCNOutgoingTransforms(nil, nil, "hy3", cliproxyexecutor.Options{}, body)
+	arr := gjson.GetBytes(got, "messages").Array()
+	if len(arr) != 1 || arr[0].Get("role").String() != "user" {
+		t.Fatalf("CN transform must not inject a system prompt, got body=%s", got)
+	}
+}
