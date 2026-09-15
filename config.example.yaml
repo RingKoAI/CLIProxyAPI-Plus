@@ -144,6 +144,12 @@ error-logs-max-files: 10
 # When false, disable in-memory usage statistics aggregation
 usage-statistics-enabled: false
 
+# Enable Prometheus /metrics on the API listener (restart required).
+# Set CLIPROXY_METRICS_TOKEN in the environment; without it metrics stay disabled.
+# Scrapes must send Authorization: Bearer <token>. Use TLS or a trusted network.
+# This is independent of usage-statistics-enabled. See docs/monitoring.md.
+metrics-enabled: false
+
 # How long (in seconds) usage queue items are retained in memory for the Management API.
 # The local Redis RESP usage output is disabled.
 # Default: 60. Max: 3600.

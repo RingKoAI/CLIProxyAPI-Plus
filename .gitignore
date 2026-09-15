@@ -5,6 +5,7 @@ cli-proxy-api
 # Configuration
 config.yaml
 .env
+cliproxy-metrics-token
 
 # Generated content
 bin/*
@@ -32,6 +33,7 @@ auths/*
 docs/*
 !docs/codebuddy-cn-tls-fingerprint.md
 !docs/deepseek-web.md
+!docs/monitoring.md
 !docs/scripts/
 AGENTS.md
 CLAUDE.md

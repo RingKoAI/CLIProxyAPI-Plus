@@ -37,6 +37,10 @@ type Config struct {
 	// Debug enables or disables debug-level logging and other debug features.
 	Debug bool `yaml:"debug" json:"debug"`
 
+	// MetricsEnabled enables Prometheus collection and /metrics (requires CLIPROXY_METRICS_TOKEN).
+	// Changes take effect after restart, independently of usage-statistics-enabled.
+	MetricsEnabled bool `yaml:"metrics-enabled" json:"metrics-enabled"`
+
 	// Pprof config controls the optional pprof HTTP debug server.
 	Pprof PprofConfig `yaml:"pprof" json:"pprof"`
 
