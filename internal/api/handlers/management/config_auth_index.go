@@ -286,6 +286,41 @@ func (h *Handler) codeBuddyKeysWithAuthIndex(spec codeBuddyKeyListSpec) []codeBu
 	return out
 }
 
+type xiaohuanxiongKeyWithAuthIndex struct {
+	config.XiaohuanxiongKey
+	AuthIndex string `json:"auth-index,omitempty"`
+}
+
+func (h *Handler) xiaohuanxiongKeysWithAuthIndex() []xiaohuanxiongKeyWithAuthIndex {
+	if h == nil {
+		return nil
+	}
+	liveIndexByID := h.liveAuthIndexByID()
+
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if h.cfg == nil {
+		return nil
+	}
+
+	entries := h.cfg.XiaohuanxiongKey
+	idGen := synthesizer.NewStableIDGenerator()
+	out := make([]xiaohuanxiongKeyWithAuthIndex, len(entries))
+	for i := range entries {
+		entry := entries[i]
+		authIndex := ""
+		if key := strings.TrimSpace(entry.APIKey); key != "" {
+			id, _ := idGen.Next("xiaohuanxiong:apikey", key, entry.BaseURL)
+			authIndex = liveIndexByID[id]
+		}
+		out[i] = xiaohuanxiongKeyWithAuthIndex{
+			XiaohuanxiongKey: entry,
+			AuthIndex:        authIndex,
+		}
+	}
+	return out
+}
+
 func (h *Handler) vertexCompatKeysWithAuthIndex() []vertexCompatKeyWithAuthIndex {
 	if h == nil {
 		return nil

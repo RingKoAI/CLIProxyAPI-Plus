@@ -4,6 +4,8 @@ package registry
 
 import (
 	"strings"
+
+	"github.com/router-for-me/CLIProxyAPI/v7/internal/constant"
 )
 
 const (
@@ -526,6 +528,8 @@ func GetStaticModelDefinitionsByChannel(channel string) []*ModelInfo {
 		return GetCodeBuddyAIModels()
 	case "deepseek-web":
 		return GetDeepSeekWebModels()
+	case constant.Xiaohuanxiong:
+		return GetXiaohuanxiongModels()
 	case "antigravity":
 		return GetAntigravityModels()
 	case "xai", "x-ai", "grok":
