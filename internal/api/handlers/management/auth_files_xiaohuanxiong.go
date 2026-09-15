@@ -91,7 +91,9 @@ func runXiaohuanxiongLogin(ctx context.Context, h *Handler, state, callbackPath 
 		}
 		return
 	}
-	completeXiaohuanxiongLogin(ctx, h, state, code)
+	if errComplete := completeXiaohuanxiongLogin(ctx, h, state, code); errComplete != nil {
+		fmt.Printf("Xiaohuanxiong authentication failed: %v\n", errComplete)
+	}
 }
 
 // waitXiaohuanxiongCallback blocks until the callback file appears or the
@@ -141,10 +143,12 @@ func waitXiaohuanxiongCallback(ctx context.Context, state, callbackPath string) 
 	}
 }
 
-// completeXiaohuanxiongLogin exchanges a one-time code and persists the credential.
-func completeXiaohuanxiongLogin(ctx context.Context, h *Handler, state, code string) {
+// completeXiaohuanxiongLogin exchanges a one-time code and persists the
+// credential. It returns an error for every non-success path so callers never
+// have to infer the outcome from session state.
+func completeXiaohuanxiongLogin(ctx context.Context, h *Handler, state, code string) error {
 	if errGuard := guardOAuthSessionPendingForSave(state, constant.Xiaohuanxiong); errGuard != nil {
-		return
+		return errGuard
 	}
 
 	client := xiaohuanxiongauth.NewClient(nil)
@@ -152,11 +156,10 @@ func completeXiaohuanxiongLogin(ctx context.Context, h *Handler, state, code str
 	if errExchange != nil {
 		log.Errorf("Xiaohuanxiong token exchange failed: %v", errExchange)
 		SetOAuthSessionError(state, oauthSessionErrorWithCause("Authentication failed", errExchange))
-		fmt.Printf("Xiaohuanxiong authentication failed: %v\n", errExchange)
-		return
+		return errExchange
 	}
 	if !IsOAuthSessionPending(state, constant.Xiaohuanxiong) {
-		return
+		return errOAuthSessionNotPending
 	}
 
 	fileName := xiaohuanxiongAuthFileName(token)
@@ -182,18 +185,18 @@ func completeXiaohuanxiongLogin(ctx context.Context, h *Handler, state, code str
 	}
 
 	if errGuard := guardOAuthSessionPendingForSave(state, constant.Xiaohuanxiong); errGuard != nil {
-		return
+		return errGuard
 	}
 	savedPath, errSave := h.saveTokenRecord(ctx, record)
 	if errSave != nil {
 		log.Errorf("Failed to save Xiaohuanxiong authentication tokens: %v", errSave)
 		SetOAuthSessionError(state, "Failed to save authentication tokens")
-		fmt.Printf("Failed to save Xiaohuanxiong authentication tokens: %v\n", errSave)
-		return
+		return errSave
 	}
 
 	CompleteOAuthSession(state)
 	fmt.Printf("Xiaohuanxiong authentication successful! Token saved to %s\n", savedPath)
+	return nil
 }
 
 // PostXiaohuanxiongAuthCallback accepts a pasted callback URL (or a bare
@@ -235,10 +238,8 @@ func (h *Handler) PostXiaohuanxiongAuthCallback(c *gin.Context) {
 	}
 
 	ctx := PopulateAuthContext(context.Background(), c)
-	completeXiaohuanxiongLogin(ctx, h, state, code)
-
-	if _, status, ok := GetOAuthSession(state); ok && status != "" {
-		c.JSON(http.StatusBadRequest, gin.H{"status": "error", "error": status})
+	if errComplete := completeXiaohuanxiongLogin(ctx, h, state, code); errComplete != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"status": "error", "error": errComplete.Error()})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"status": "ok"})

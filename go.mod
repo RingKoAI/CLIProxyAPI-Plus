@@ -59,6 +59,7 @@ require (
 	github.com/pion/transport/v4 v4.0.2 // indirect
 	github.com/pion/turn/v5 v5.0.12 // indirect
 	github.com/prometheus/common v0.62.0 // indirect
+	github.com/prometheus/procfs v0.15.1 // indirect
 	github.com/rogpeppe/go-internal v1.15.0 // indirect
 	github.com/wlynxg/anet v0.0.5 // indirect
 	go.uber.org/atomic v1.11.0 // indirect
