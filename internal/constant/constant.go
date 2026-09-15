@@ -39,4 +39,9 @@ const (
 
 	// Interactions represents the Google Interactions API format identifier.
 	Interactions = "interactions"
+
+	// Xiaohuanxiong represents the SenseTime Xiaohuanxiong (Raccoon) office
+	// assistant provider identifier. It authenticates with the desktop-app
+	// OAuth authorization-code flow against xiaohuanxiong.com.
+	Xiaohuanxiong = "xiaohuanxiong"
 )

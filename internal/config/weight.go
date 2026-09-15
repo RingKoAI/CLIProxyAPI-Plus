@@ -32,6 +32,7 @@ func validateCredentialWeightYAML(data []byte) error {
 		"gemini-api-key": {}, "interactions-api-key": {}, "claude-api-key": {},
 		"vertex-api-key": {}, "codex-api-key": {}, "xai-api-key": {},
 		"deepseek-web-api-key": {}, "codebuddy-cn-api-key": {}, "codebuddy-ai-api-key": {},
+		"xiaohuanxiong-api-key": {},
 	}
 	for index := 0; root != nil && root.Kind == yaml.MappingNode && index+1 < len(root.Content); index += 2 {
 		name := root.Content[index].Value
@@ -145,6 +146,11 @@ func (cfg *Config) ValidateCredentialWeights() error {
 	for index := range cfg.DeepSeekWebKey {
 		if errValidate := ValidateCredentialWeight(cfg.DeepSeekWebKey[index].Weight); errValidate != nil {
 			return fmt.Errorf("deepseek-web-api-key[%d].weight: %w", index, errValidate)
+		}
+	}
+	for index := range cfg.XiaohuanxiongKey {
+		if errValidate := ValidateCredentialWeight(cfg.XiaohuanxiongKey[index].Weight); errValidate != nil {
+			return fmt.Errorf("xiaohuanxiong-api-key[%d].weight: %w", index, errValidate)
 		}
 	}
 	for index := range cfg.CodeBuddyCNKey {

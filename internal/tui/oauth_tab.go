@@ -27,6 +27,7 @@ var oauthProviders = []oauthProvider{
 	{"CodeBuddy CN", "codebuddy-cn-auth-url", "🟦", true},
 	{"CodeBuddy AI", "codebuddy-ai-auth-url", "🟦", true},
 	{"xAI", "xai-auth-url", "⬛", true},
+	{"Xiaohuanxiong (Raccoon)", "xiaohuanxiong-auth-url", "🦝", false},
 }
 
 // oauthTabModel handles OAuth login flows.
@@ -364,6 +365,8 @@ func (m oauthTabModel) submitCallback(callbackURL string) tea.Cmd {
 					providerKey = "codebuddy-ai"
 				case "xai-auth-url":
 					providerKey = "xai"
+				case "xiaohuanxiong-auth-url":
+					providerKey = "xiaohuanxiong"
 				}
 				break
 			}

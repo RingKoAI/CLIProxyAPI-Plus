@@ -747,6 +747,50 @@ type DeepSeekWebKey = CodeBuddyCNKey
 // DeepSeekWebModel uses the shared static/configured model mapping shape.
 type DeepSeekWebModel = CodeBuddyCNModel
 
+// XiaohuanxiongKey represents a SenseTime Xiaohuanxiong (商汤小浣熊 / Raccoon)
+// credential. The api-key field carries either the access token produced by the
+// desktop OAuth login flow or a manually pasted bearer token.
+//
+// The gateway issues short-lived JWT access tokens, so an optional refresh-token
+// enables automatic rotation against /api/web/auth/v1/refresh.
+type XiaohuanxiongKey struct {
+	// APIKey is the bearer access token used for gateway requests.
+	APIKey string `yaml:"api-key" json:"api-key"`
+
+	// RefreshToken optionally enables automatic access-token rotation.
+	RefreshToken string `yaml:"refresh-token,omitempty" json:"refresh-token,omitempty"`
+
+	// Priority controls selection preference when multiple credentials match.
+	Priority int `yaml:"priority,omitempty" json:"priority,omitempty"`
+
+	// Weight controls proportional selection under weighted-round-robin.
+	Weight *int `yaml:"weight,omitempty" json:"weight,omitempty"`
+
+	// Prefix optionally namespaces models for this credential (e.g. "xhx/glm-5-3").
+	Prefix string `yaml:"prefix,omitempty" json:"prefix,omitempty"`
+
+	// BaseURL overrides the gateway base URL.
+	BaseURL string `yaml:"base-url,omitempty" json:"base-url,omitempty"`
+
+	// ProxyURL overrides the global proxy setting for this credential.
+	ProxyURL string `yaml:"proxy-url,omitempty" json:"proxy-url,omitempty"`
+
+	// Models defines upstream model names and aliases for request routing.
+	Models []XiaohuanxiongModel `yaml:"models,omitempty" json:"models,omitempty"`
+
+	// Headers optionally adds extra HTTP headers for requests sent with this credential.
+	Headers map[string]string `yaml:"headers,omitempty" json:"headers,omitempty"`
+
+	// ExcludedModels lists model IDs that should be excluded for this provider.
+	ExcludedModels []string `yaml:"excluded-models,omitempty" json:"excluded-models,omitempty"`
+
+	// DisableCooling overrides the global cooling policy for this credential when set.
+	DisableCooling *bool `yaml:"disable-cooling,omitempty" json:"disable-cooling,omitempty"`
+}
+
+// XiaohuanxiongModel uses the shared static/configured model mapping shape.
+type XiaohuanxiongModel = CodeBuddyCNModel
+
 // CodeBuddyAIKey uses the API-key entry shape for the CodeBuddy AI
 // (international, https://www.codebuddy.ai) gateway. The upstream is the same
 // OpenAI-compatible CodeBuddy REST surface as CodeBuddy CN; only the host and

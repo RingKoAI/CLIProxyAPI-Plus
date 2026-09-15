@@ -155,6 +155,10 @@ func (s *Server) registerManagementRoutes() {
 		mgmt.PUT("/codebuddy-ai-api-key", s.mgmt.PutCodeBuddyAIKeys)
 		mgmt.PATCH("/codebuddy-ai-api-key", s.mgmt.PatchCodeBuddyAIKey)
 		mgmt.DELETE("/codebuddy-ai-api-key", s.mgmt.DeleteCodeBuddyAIKey)
+		mgmt.GET("/xiaohuanxiong-api-key", s.mgmt.GetXiaohuanxiongKeys)
+		mgmt.PUT("/xiaohuanxiong-api-key", s.mgmt.PutXiaohuanxiongKeys)
+		mgmt.PATCH("/xiaohuanxiong-api-key", s.mgmt.PatchXiaohuanxiongKey)
+		mgmt.DELETE("/xiaohuanxiong-api-key", s.mgmt.DeleteXiaohuanxiongKey)
 
 		mgmt.GET("/openai-compatibility", s.mgmt.GetOpenAICompat)
 		mgmt.PUT("/openai-compatibility", s.mgmt.PutOpenAICompat)
@@ -203,6 +207,8 @@ func (s *Server) registerManagementRoutes() {
 		mgmt.GET("/trae-auth-url", s.mgmt.RequestTraeToken)
 		mgmt.POST("/trae-auth-callback", s.mgmt.PostTraeAuthCallback)
 		mgmt.GET("/devin-auth-url", s.mgmt.RequestDevinToken)
+		mgmt.GET("/xiaohuanxiong-auth-url", s.mgmt.RequestXiaohuanxiongToken)
+		mgmt.POST("/xiaohuanxiong-auth-callback", s.mgmt.PostXiaohuanxiongAuthCallback)
 		mgmt.GET("/get-auth-status", s.mgmt.GetAuthStatus)
 		mgmt.DELETE("/oauth-session", s.mgmt.CancelAuthSession)
 	}

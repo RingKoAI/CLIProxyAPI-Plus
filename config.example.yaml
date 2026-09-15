@@ -172,8 +172,8 @@ force-model-prefix: false
 #   # prompt-file: /path/to/prompt-inject.md
 #   # Optional provider allowlist (empty = all providers).
 #   # Identifiers: gemini, codex, claude, codebuddy-cn, codebuddy-ai, deepseek-web,
-#   # trae, kimi, aistudio, vertex, antigravity, devin, xai, qwen-web, or any
-#   # openai-compatibility provider name.
+#   # trae, kimi, aistudio, vertex, antigravity, devin, xai, qwen-web,
+#   # xiaohuanxiong, or any openai-compatibility provider name.
 #   providers:
 #     - claude
 #     - gemini
@@ -670,6 +670,25 @@ nonstream-keepalive-interval: 0
 #     excluded-models:
 #       - "deepseek-v4-pro-search"
 
+# SenseTime Xiaohuanxiong (商汤小浣熊 / Raccoon) credential.
+# The gateway is OpenAI-compatible at https://xiaohuanxiong.com/api/web/llm/v2.
+# Acquire the access token with the OAuth login flow (management API
+# GET /v0/management/xiaohuanxiong-auth-url) or copy it from a logged-in client.
+# When a refresh-token is present, the token is rotated automatically against
+# /api/web/auth/v1/refresh; otherwise the access token is used until it expires.
+# xiaohuanxiong-api-key:
+#   - api-key: "YOUR_ACCESS_TOKEN"
+#     refresh-token: "YOUR_REFRESH_TOKEN" # optional: enables automatic rotation
+#     base-url: "https://xiaohuanxiong.com/api/web/llm/v2" # optional override
+#     weight: 1
+#     prefix: "xhx"                       # optional: require xhx/glm-5-3
+#     proxy-url: "socks5://proxy.example.com:1080" # optional per-token proxy
+#     excluded-models:
+#       - "kimi-k3"
+#     models:                             # optional: override the built-in catalog
+#       - name: "glm-5-3"
+#         alias: "glm-5-3"
+#
 # TRAE SOLO CN desktop credential. Copy the Cloud-IDE-JWT access token from a
 # logged-in desktop client (or use the login.sh flow from traework2api) and paste
 # it as api-key. Set refresh-token to enable automatic ExchangeToken rotation.

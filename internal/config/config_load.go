@@ -180,6 +180,9 @@ func LoadConfigOptional(configFile string, optional bool) (*Config, error) {
 	// Sanitize DeepSeek Web keys: drop entries without userToken.
 	cfg.SanitizeDeepSeekWebKeys()
 
+	// Sanitize Xiaohuanxiong keys: drop entries without an access token.
+	cfg.SanitizeXiaohuanxiongKeys()
+
 	// Sanitize Trae keys: drop entries without an access token.
 	cfg.SanitizeTraeKeys()
 

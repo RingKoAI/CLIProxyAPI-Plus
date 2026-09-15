@@ -188,6 +188,17 @@ func (s *Service) registerModelsForAuthWithCache(ctx context.Context, a *coreaut
 			}
 		}
 		models = applyExcludedModels(models, excluded)
+	case constant.Xiaohuanxiong:
+		models = registry.GetXiaohuanxiongModels()
+		if entry := s.resolveConfigXiaohuanxiongKey(a); entry != nil {
+			if len(entry.Models) > 0 {
+				models = buildXiaohuanxiongConfigModels(entry)
+			}
+			if authKind == "apikey" {
+				excluded = entry.ExcludedModels
+			}
+		}
+		models = applyExcludedModels(models, excluded)
 	case "xai":
 		models = registry.GetXAIModels()
 		if entry := s.resolveConfigXAIKey(a); entry != nil {
@@ -980,6 +991,44 @@ func buildDeepSeekWebConfigModels(entry *config.DeepSeekWebKey) []*ModelInfo {
 		return nil
 	}
 	return buildConfigModels(entry.Models, constant.DeepSeekWeb, "openai", constant.DeepSeekWeb)
+}
+
+func buildXiaohuanxiongConfigModels(entry *config.XiaohuanxiongKey) []*ModelInfo {
+	if entry == nil {
+		return nil
+	}
+	return buildConfigModels(entry.Models, constant.Xiaohuanxiong, "openai", constant.Xiaohuanxiong)
+}
+
+func (s *Service) resolveConfigXiaohuanxiongKey(auth *coreauth.Auth) *config.XiaohuanxiongKey {
+	if s == nil || s.cfg == nil || auth == nil {
+		return nil
+	}
+	if auth.AuthKind() != coreauth.AuthKindAPIKey {
+		return nil
+	}
+	// XiaohuanxiongKey is a distinct struct (it carries refresh-token), so the
+	// shared CodeBuddy-style matcher does not apply; match on api_key/base_url.
+	var attrKey, attrBase string
+	if auth.Attributes != nil {
+		attrKey = strings.TrimSpace(auth.Attributes["api_key"])
+		attrBase = strings.TrimSpace(auth.Attributes["base_url"])
+	}
+	for i := range s.cfg.XiaohuanxiongKey {
+		entry := &s.cfg.XiaohuanxiongKey[i]
+		cfgKey := strings.TrimSpace(entry.APIKey)
+		cfgBase := strings.TrimSpace(entry.BaseURL)
+		if attrKey != "" {
+			if strings.EqualFold(cfgKey, attrKey) && (cfgBase == "" || strings.EqualFold(cfgBase, attrBase)) {
+				return entry
+			}
+			continue
+		}
+		if attrBase != "" && strings.EqualFold(cfgBase, attrBase) {
+			return entry
+		}
+	}
+	return nil
 }
 
 func (s *Service) resolveConfigDeepSeekWebKey(auth *coreauth.Auth) *config.DeepSeekWebKey {

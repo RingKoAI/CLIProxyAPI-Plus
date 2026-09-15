@@ -135,6 +135,9 @@ type Config struct {
 	// DeepSeekWebKey defines DeepSeek Web userToken configurations.
 	DeepSeekWebKey []DeepSeekWebKey `yaml:"deepseek-web-api-key" json:"deepseek-web-api-key"`
 
+	// XiaohuanxiongKey defines SenseTime Xiaohuanxiong (Raccoon) credentials.
+	XiaohuanxiongKey []XiaohuanxiongKey `yaml:"xiaohuanxiong-api-key" json:"xiaohuanxiong-api-key"`
+
 	// TraeKey defines TRAE SOLO CN desktop credentials.
 	TraeKey []TraeKey `yaml:"trae-api-key" json:"trae-api-key"`
 

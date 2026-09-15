@@ -218,6 +218,38 @@ func (cfg *Config) SanitizeDeepSeekWebKeys() {
 	cfg.DeepSeekWebKey = sanitizeCodeBuddyStyleKeyEntries(cfg.DeepSeekWebKey)
 }
 
+// SanitizeXiaohuanxiongKeys normalizes Xiaohuanxiong (Raccoon) credentials.
+func (cfg *Config) SanitizeXiaohuanxiongKeys() {
+	if cfg == nil {
+		return
+	}
+	if len(cfg.XiaohuanxiongKey) == 0 {
+		return
+	}
+	out := cfg.XiaohuanxiongKey[:0]
+	seen := make(map[string]struct{}, len(cfg.XiaohuanxiongKey))
+	for i := range cfg.XiaohuanxiongKey {
+		entry := &cfg.XiaohuanxiongKey[i]
+		entry.APIKey = strings.TrimSpace(entry.APIKey)
+		entry.RefreshToken = strings.TrimSpace(entry.RefreshToken)
+		entry.Prefix = normalizeModelPrefix(entry.Prefix)
+		entry.BaseURL = strings.TrimSpace(entry.BaseURL)
+		entry.ProxyURL = strings.TrimSpace(entry.ProxyURL)
+		entry.Headers = NormalizeHeaders(entry.Headers)
+		entry.ExcludedModels = NormalizeExcludedModels(entry.ExcludedModels)
+		if entry.APIKey == "" {
+			continue
+		}
+		uniqueKey := entry.APIKey + "|" + entry.BaseURL
+		if _, exists := seen[uniqueKey]; exists {
+			continue
+		}
+		seen[uniqueKey] = struct{}{}
+		out = append(out, *entry)
+	}
+	cfg.XiaohuanxiongKey = out
+}
+
 // SanitizeTraeKeys normalizes TRAE SOLO CN desktop credentials.
 func (cfg *Config) SanitizeTraeKeys() {
 	if cfg == nil {

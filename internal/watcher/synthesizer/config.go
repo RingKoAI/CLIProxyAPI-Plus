@@ -30,6 +30,10 @@ const codeBuddyAIDefaultBaseURL = "https://www.codebuddy.ai/v2"
 
 const deepSeekWebDefaultBaseURL = "https://chat.deepseek.com"
 
+// xiaohuanxiongDefaultBaseURL is the Xiaohuanxiong (Raccoon) OpenAI-compatible
+// LLM gateway used when a xiaohuanxiong-api-key entry does not set base-url.
+const xiaohuanxiongDefaultBaseURL = "https://xiaohuanxiong.com/api/web/llm/v2"
+
 // traeDefaultBaseURL is the TRAE SOLO CN desktop agent gateway used when a
 // trae-api-key entry does not specify its own base-url.
 const traeDefaultBaseURL = "https://trae-api-cn.mchost.guru"
@@ -80,6 +84,8 @@ func (s *ConfigSynthesizer) Synthesize(ctx *SynthesisContext) ([]*coreauth.Auth,
 	out = append(out, s.synthesizeCodeBuddyAIKeys(ctx)...)
 	// DeepSeek Web userTokens
 	out = append(out, s.synthesizeDeepSeekWebKeys(ctx)...)
+	// Xiaohuanxiong (SenseTime Raccoon) credentials
+	out = append(out, s.synthesizeXiaohuanxiongKeys(ctx)...)
 	// TRAE SOLO CN desktop credentials
 	out = append(out, s.synthesizeTraeKeys(ctx)...)
 	// OpenAI-compat
@@ -375,6 +381,64 @@ func (s *ConfigSynthesizer) synthesizeDeepSeekWebKeys(ctx *SynthesisContext) []*
 		addConfigHeadersToAttrs(entry.Headers, attrs)
 		a := &coreauth.Auth{
 			ID: id, Provider: constant.DeepSeekWeb, Label: "deepseek-web-usertoken",
+			Prefix: prefix, Status: coreauth.StatusActive, ProxyURL: strings.TrimSpace(entry.ProxyURL),
+			Attributes: attrs, Metadata: metadata, CreatedAt: now, UpdatedAt: now,
+		}
+		ApplyAuthExcludedModelsMeta(a, cfg, entry.ExcludedModels, "apikey")
+		if len(a.Metadata) == 0 {
+			a.Metadata = nil
+		}
+		out = append(out, a)
+	}
+	return out
+}
+
+// synthesizeXiaohuanxiongKeys creates Auth entries for Xiaohuanxiong (Raccoon)
+// access tokens acquired from the desktop OAuth flow, or pasted manually.
+func (s *ConfigSynthesizer) synthesizeXiaohuanxiongKeys(ctx *SynthesisContext) []*coreauth.Auth {
+	cfg := ctx.Config
+	now := ctx.Now
+	idGen := ctx.IDGenerator
+
+	out := make([]*coreauth.Auth, 0, len(cfg.XiaohuanxiongKey))
+	for i := range cfg.XiaohuanxiongKey {
+		entry := cfg.XiaohuanxiongKey[i]
+		key := strings.TrimSpace(entry.APIKey)
+		if key == "" {
+			continue
+		}
+		baseURL := strings.TrimSpace(entry.BaseURL)
+		if baseURL == "" {
+			baseURL = xiaohuanxiongDefaultBaseURL
+		}
+		prefix := strings.TrimSpace(entry.Prefix)
+		id, token := idGen.Next("xiaohuanxiong:apikey", key, baseURL)
+		attrs := map[string]string{
+			"source":       fmt.Sprintf("config:xiaohuanxiong[%s]", token),
+			"api_key":      key,
+			"base_url":     baseURL,
+			"config_index": strconv.Itoa(i),
+		}
+		metadata := map[string]any{}
+		// The executor reads refresh_token from metadata to rotate the access
+		// token; without this a configured refresh-token would be unused.
+		if refreshToken := strings.TrimSpace(entry.RefreshToken); refreshToken != "" {
+			metadata["refresh_token"] = refreshToken
+			metadata["auth_kind"] = coreauth.AuthKindOAuth
+		}
+		if entry.DisableCooling != nil {
+			metadata["disable_cooling"] = *entry.DisableCooling
+		}
+		if entry.Priority != 0 {
+			attrs["priority"] = strconv.Itoa(entry.Priority)
+		}
+		addWeightToAttrs(entry.Weight, attrs)
+		if hash := diff.ComputeCodeBuddyCNModelsHash(entry.Models); hash != "" {
+			attrs["models_hash"] = hash
+		}
+		addConfigHeadersToAttrs(entry.Headers, attrs)
+		a := &coreauth.Auth{
+			ID: id, Provider: constant.Xiaohuanxiong, Label: "xiaohuanxiong-access-token",
 			Prefix: prefix, Status: coreauth.StatusActive, ProxyURL: strings.TrimSpace(entry.ProxyURL),
 			Attributes: attrs, Metadata: metadata, CreatedAt: now, UpdatedAt: now,
 		}
