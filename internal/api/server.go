@@ -26,6 +26,7 @@ import (
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/managementasset"
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/pluginhost"
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/redisqueue"
+	"github.com/router-for-me/CLIProxyAPI/v7/internal/telemetry"
 	sdkaccess "github.com/router-for-me/CLIProxyAPI/v7/sdk/access"
 	"github.com/router-for-me/CLIProxyAPI/v7/sdk/api/handlers"
 	"github.com/router-for-me/CLIProxyAPI/v7/sdk/cliproxy/auth"
@@ -133,12 +134,31 @@ func NewServer(cfg *config.Config, authManager *auth.Manager, accessManager *sdk
 		optionState.engineConfigurator(engine)
 	}
 
+	// Metrics wrap recovery so recovered 500 responses are counted correctly.
+	// Capture startup settings rather than reading the hot-reloaded config per request.
+	var metrics *telemetry.Metrics
+	metricsToken := strings.TrimSpace(os.Getenv("CLIPROXY_METRICS_TOKEN"))
+	if cfg.MetricsEnabled {
+		if metricsToken == "" {
+			log.Warn("metrics disabled: CLIPROXY_METRICS_TOKEN is required")
+		} else {
+			metrics = telemetry.Default()
+			engine.Use(metrics.Middleware())
+		}
+	}
+
 	// Add middleware
 	engine.Use(logging.GinLogrusLogger())
 	engine.Use(logging.GinLogrusRecovery())
 	engine.Use(logging.CPATraceIDMiddleware())
 	for _, mw := range optionState.extraMiddleware {
 		engine.Use(mw)
+	}
+
+	// Register before request logging and business middleware: scrape credentials
+	// must not enter request logs, and monitoring must work during upstream outages.
+	if metrics != nil {
+		engine.GET("/metrics", gin.WrapH(metrics.ProtectedHandler(metricsToken)))
 	}
 
 	// Add request logging middleware (positioned after recovery, before auth)
