@@ -311,6 +311,7 @@ func TestFetchFreeBenefitModels(t *testing.T) {
 // TestListActivitiesAndDailyCheckIn pins the welfare read + claim + confirm flow.
 func TestListActivitiesAndDailyCheckIn(t *testing.T) {
 	var claimBody map[string]any
+	var confirmBody map[string]any
 	var confirmed bool
 	client, server := newTestClient(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
@@ -318,15 +319,19 @@ func TestListActivitiesAndDailyCheckIn(t *testing.T) {
 			if r.URL.Query().Get("channel") != "DESKTOP" {
 				t.Errorf("channel = %q", r.URL.Query().Get("channel"))
 			}
+			// Mirrors the production payload: campaignId is a NUMBER and the
+			// daily check-in is typed USER_LOGIN with extra.triggerEvent
+			// user.login. A student activity is present but not claimable.
 			_, _ = w.Write([]byte(`{"code":0,"data":{"items":[
-				{"campaignId":"login-x","type":"USER_LOGIN","status":"ELIGIBLE","claimable":true,"benefitAmount":100},
-				{"campaignId":"daily-1","type":"DAILY_CLAIM","status":"ELIGIBLE","claimable":true,"benefitAmount":1000}
+				{"campaignId":2,"type":"STUDENT_CERTIFIED","status":null,"claimable":false,"benefitAmount":4000},
+				{"campaignId":1,"type":"USER_LOGIN","title":"每日签到领1000 积分","status":"ELIGIBLE","claimable":true,"benefitAmount":1000,"extra":{"triggerEvent":"user.login"}}
 			]}}`))
 		case WelfareClaimPath:
 			_ = json.NewDecoder(r.Body).Decode(&claimBody)
 			_, _ = w.Write([]byte(`{"code":0,"data":{"userBenefitId":"ub-1"}}`))
 		case WelfareConfirmPath:
 			confirmed = true
+			_ = json.NewDecoder(r.Body).Decode(&confirmBody)
 			_, _ = w.Write([]byte(`{"code":0,"data":{}}`))
 		default:
 			t.Errorf("unexpected path: %s", r.URL.Path)
@@ -341,28 +346,75 @@ func TestListActivitiesAndDailyCheckIn(t *testing.T) {
 	if len(activities) != 2 {
 		t.Fatalf("activity count = %d", len(activities))
 	}
+	// The numeric campaignId must survive as a string, otherwise confirm's
+	// campaignId field would be rejected upstream.
+	if activities[1].CampaignID != "1" {
+		t.Fatalf("numeric campaignId decoded as %q, want \"1\"", activities[1].CampaignID)
+	}
 	if !activities[1].ClaimableNow() || activities[0].ClaimableNow() {
-		t.Fatal("claimable detection is wrong: only daily_claim is claimable")
+		t.Fatal("claimable detection is wrong: only the daily check-in (USER_LOGIN/user.login) is claimable")
 	}
 
 	result, errCheckIn := client.DailyCheckIn(context.Background(), Credentials{AccessKey: "AK", SecretKey: "SK"})
 	if errCheckIn != nil {
 		t.Fatalf("daily check-in: %v", errCheckIn)
 	}
-	if !result.Claimed || result.CampaignID != "daily-1" {
+	if !result.Claimed || result.CampaignID != "1" {
 		t.Fatalf("unexpected check-in result: %+v", result)
 	}
 	if result.BenefitAmount != 1000 {
 		t.Fatalf("benefit amount = %d, want 1000", result.BenefitAmount)
 	}
-	if claimBody["campaignId"] != "daily-1" || claimBody["channel"] != "DESKTOP" {
+	if claimBody["campaignId"] != "1" || claimBody["channel"] != "DESKTOP" {
 		t.Fatalf("unexpected claim body: %+v", claimBody)
 	}
-	if idempotentKey, _ := claimBody["idempotentKey"].(string); !strings.HasPrefix(idempotentKey, "claim_daily-1_") {
+	if idempotentKey, _ := claimBody["idempotentKey"].(string); !strings.HasPrefix(idempotentKey, "claim_1_") {
 		t.Fatalf("idempotent key = %q", idempotentKey)
 	}
 	if !confirmed {
 		t.Fatal("the claim was not confirmed")
+	}
+	// confirm requires BOTH campaignId and userBenefitId; sending only
+	// userBenefitId fails upstream with PROMPTCENTER.00000001.
+	if confirmBody["campaignId"] != "1" || confirmBody["userBenefitId"] != "ub-1" {
+		t.Fatalf("unexpected confirm body: %+v", confirmBody)
+	}
+}
+
+// TestClaimableNowRecognizesProductionDailyActivity pins the real-world shape:
+// the daily check-in is USER_LOGIN with triggerEvent user.login, so matching on
+// DAILY_CLAIM alone would never claim it.
+func TestClaimableNowRecognizesProductionDailyActivity(t *testing.T) {
+	daily := Activity{
+		CampaignID:   "1",
+		Type:         normalizeActivityType("USER_LOGIN"),
+		TriggerEvent: "user.login",
+		Title:        "每日签到领1000 积分",
+		Claimable:    true,
+		Status:       WelfareEligible,
+	}
+	if !daily.ClaimableNow() {
+		t.Fatal("production daily check-in must be claimable")
+	}
+
+	// Already claimed today.
+	claimed := daily
+	claimed.Status = WelfareClaimed
+	if claimed.ClaimableNow() {
+		t.Fatal("a claimed daily check-in must not be claimable")
+	}
+
+	// Not claimable upstream.
+	notClaimable := daily
+	notClaimable.Claimable = false
+	if notClaimable.ClaimableNow() {
+		t.Fatal("claimable=false must not be claimable")
+	}
+
+	// A non-daily activity must never be picked up.
+	student := Activity{Type: "student_certify", Claimable: true, Status: WelfareEligible}
+	if student.ClaimableNow() {
+		t.Fatal("non-daily activities must not be claimable as check-in")
 	}
 }
 

@@ -25,12 +25,47 @@ const (
 	WelfareConsumed WelfareStatus = "CONSUMED"
 )
 
+// flexString accepts a JSON string or number and exposes it as a string.
+//
+// The welfare API is inconsistent: campaignId is a number in
+// GET /v1/ops/delivery (campaignId: 1) but the schema reads like a string. A
+// plain `string` field makes encoding/json reject the whole response with an
+// UnmarshalTypeError, which silently dropped the primary check-in path.
+type flexString string
+
+// UnmarshalJSON accepts a JSON string, number, or null.
+func (f *flexString) UnmarshalJSON(data []byte) error {
+	trimmed := strings.TrimSpace(string(data))
+	if trimmed == "" || trimmed == "null" {
+		*f = ""
+		return nil
+	}
+	if strings.HasPrefix(trimmed, "\"") {
+		var decoded string
+		if errUnmarshal := json.Unmarshal(data, &decoded); errUnmarshal != nil {
+			return errUnmarshal
+		}
+		*f = flexString(decoded)
+		return nil
+	}
+	// Numbers (and any other scalar) are taken verbatim without quotes.
+	*f = flexString(trimmed)
+	return nil
+}
+
+// String returns the underlying value.
+func (f flexString) String() string { return strings.TrimSpace(string(f)) }
+
 // Activity is one entry of the welfare activity list.
 type Activity struct {
 	// CampaignID identifies the activity.
 	CampaignID string
 	// Type is the activity kind: daily_claim, invite_user, student_certified, user_login.
 	Type string
+	// TriggerEvent is the upstream extra.triggerEvent value (e.g. user.login).
+	// It is the most reliable signal for identifying the daily check-in:
+	// the real daily activity is typed USER_LOGIN, not DAILY_CLAIM.
+	TriggerEvent string
 	// Title is the localized activity title.
 	Title string
 	// Description is the localized activity description.
@@ -43,9 +78,26 @@ type Activity struct {
 	Status WelfareStatus
 }
 
-// Claimable reports whether a daily check-in is available right now.
+// IsDailyCheckIn reports whether the activity is the daily check-in.
+//
+// Observed in production (2026-09): the daily activity is type USER_LOGIN with
+// extra.triggerEvent == "user.login", title "每日签到领1000 积分". Matching only
+// on DAILY_CLAIM therefore never finds it, so all three signals are accepted.
+func (a Activity) IsDailyCheckIn() bool {
+	switch strings.ToLower(strings.TrimSpace(a.TriggerEvent)) {
+	case "user.login":
+		return true
+	}
+	switch strings.ToLower(strings.TrimSpace(a.Type)) {
+	case "daily_claim", "user_login", "login":
+		return true
+	}
+	return strings.Contains(a.Title, "每日签到")
+}
+
+// ClaimableNow reports whether a daily check-in is available right now.
 func (a Activity) ClaimableNow() bool {
-	if a.Type != "daily_claim" {
+	if !a.IsDailyCheckIn() {
 		return false
 	}
 	if !a.Claimable {
@@ -78,8 +130,8 @@ type welfareDeliveryResponse struct {
 	Message string `json:"message"`
 	Data    struct {
 		Items []struct {
-			CampaignID    string          `json:"campaignId"`
-			CampaignIDAlt string          `json:"campaign_id"`
+			CampaignID    flexString      `json:"campaignId"`
+			CampaignIDAlt flexString      `json:"campaign_id"`
 			Type          string          `json:"type"`
 			Title         string          `json:"title"`
 			Description   string          `json:"description"`
@@ -87,6 +139,9 @@ type welfareDeliveryResponse struct {
 			Claimable     *bool           `json:"claimable"`
 			Status        string          `json:"status"`
 			DisplayConfig json.RawMessage `json:"displayConfig"`
+			Extra         struct {
+				TriggerEvent string `json:"triggerEvent"`
+			} `json:"extra"`
 		} `json:"items"`
 	} `json:"data"`
 }
@@ -117,8 +172,9 @@ func (c *Client) ListActivities(ctx context.Context, creds Credentials) ([]Activ
 			claimable = *item.Claimable
 		}
 		out = append(out, Activity{
-			CampaignID:    firstNonEmpty(item.CampaignID, item.CampaignIDAlt),
+			CampaignID:    firstNonEmpty(item.CampaignID.String(), item.CampaignIDAlt.String()),
 			Type:          normalizeActivityType(item.Type),
+			TriggerEvent:  strings.TrimSpace(item.Extra.TriggerEvent),
 			Title:         strings.TrimSpace(item.Title),
 			Description:   strings.TrimSpace(item.Description),
 			BenefitAmount: item.BenefitAmount,
@@ -157,8 +213,8 @@ func (c *Client) ClaimActivity(ctx context.Context, creds Credentials, campaignI
 		Code    *int   `json:"code"`
 		Message string `json:"message"`
 		Data    struct {
-			ID            string `json:"id"`
-			UserBenefitID string `json:"userBenefitId"`
+			ID            flexString `json:"id"`
+			UserBenefitID flexString `json:"userBenefitId"`
 		} `json:"data"`
 	}
 	if errUnmarshal := json.Unmarshal(raw, &claimed); errUnmarshal != nil {
@@ -171,10 +227,10 @@ func (c *Client) ClaimActivity(ctx context.Context, creds Credentials, campaignI
 	result := &CheckInResult{
 		Claimed:       true,
 		CampaignID:    campaignID,
-		UserBenefitID: firstNonEmpty(claimed.Data.ID, claimed.Data.UserBenefitID),
+		UserBenefitID: firstNonEmpty(claimed.Data.ID.String(), claimed.Data.UserBenefitID.String()),
 	}
 	if result.UserBenefitID != "" {
-		if errConfirm := c.confirmActivity(ctx, creds, result.UserBenefitID); errConfirm != nil {
+		if errConfirm := c.confirmActivity(ctx, creds, campaignID, result.UserBenefitID); errConfirm != nil {
 			// A failed confirmation leaves the claim pending; surface it so the
 			// caller can retry rather than silently reporting success.
 			return result, fmt.Errorf("codearts: claim succeeded but confirm failed: %w", errConfirm)
@@ -184,8 +240,16 @@ func (c *Client) ClaimActivity(ctx context.Context, creds Credentials, campaignI
 }
 
 // confirmActivity finalizes a claim.
-func (c *Client) confirmActivity(ctx context.Context, creds Credentials, userBenefitID string) error {
-	payload, errMarshal := json.Marshal(map[string]any{"userBenefitId": userBenefitID})
+//
+// The confirm endpoint requires BOTH campaignId and userBenefitId. Omitting
+// campaignId yields PROMPTCENTER.00000001 ("campaignId : 参数无效"), and a wrong
+// userBenefitId yields HDN.1000. Note the error envelope here is
+// error_code/error_msg (not the code/message used by claim/delivery).
+func (c *Client) confirmActivity(ctx context.Context, creds Credentials, campaignID, userBenefitID string) error {
+	payload, errMarshal := json.Marshal(map[string]any{
+		"campaignId":    campaignID,
+		"userBenefitId": userBenefitID,
+	})
 	if errMarshal != nil {
 		return fmt.Errorf("encode confirm request: %w", errMarshal)
 	}
@@ -198,12 +262,17 @@ func (c *Client) confirmActivity(ctx context.Context, creds Credentials, userBen
 		return errConfirm
 	}
 	var parsed struct {
-		Code    *int   `json:"code"`
-		Message string `json:"message"`
+		Code      *int   `json:"code"`
+		Message   string `json:"message"`
+		ErrorCode string `json:"error_code"`
+		ErrorMsg  string `json:"error_msg"`
 	}
 	if errUnmarshal := json.Unmarshal(raw, &parsed); errUnmarshal == nil {
 		if parsed.Code != nil && *parsed.Code != 0 && *parsed.Code != 200 {
 			return fmt.Errorf("%s", firstNonEmpty(parsed.Message, fmt.Sprintf("code=%d", *parsed.Code)))
+		}
+		if parsed.ErrorCode != "" && parsed.ErrorCode != "0000" {
+			return &Error{StatusCode: http.StatusOK, Code: parsed.ErrorCode, Message: parsed.ErrorMsg}
 		}
 	}
 	return nil
@@ -230,7 +299,7 @@ func (c *Client) DailyCheckIn(ctx context.Context, creds Credentials) (*CheckInR
 		}
 		// Activities loaded but nothing to claim: report the already-claimed state.
 		for _, activity := range activities {
-			if activity.Type == "daily_claim" {
+			if activity.IsDailyCheckIn() {
 				return &CheckInResult{
 					AlreadyClaimed: true,
 					CampaignID:     activity.CampaignID,
