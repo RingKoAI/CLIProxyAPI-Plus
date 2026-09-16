@@ -250,6 +250,43 @@ func (cfg *Config) SanitizeXiaohuanxiongKeys() {
 	cfg.XiaohuanxiongKey = out
 }
 
+// SanitizeCodeArtsKeys normalizes Huawei Cloud CodeArts credentials.
+//
+// An entry is kept only when the full credential triple is present, because a
+// partial AK/SK/security-token cannot produce a valid signature.
+func (cfg *Config) SanitizeCodeArtsKeys() {
+	if cfg == nil {
+		return
+	}
+	if len(cfg.CodeArtsKey) == 0 {
+		return
+	}
+	out := cfg.CodeArtsKey[:0]
+	seen := make(map[string]struct{}, len(cfg.CodeArtsKey))
+	for i := range cfg.CodeArtsKey {
+		entry := &cfg.CodeArtsKey[i]
+		entry.APIKey = strings.TrimSpace(entry.APIKey)
+		entry.SecretKey = strings.TrimSpace(entry.SecretKey)
+		entry.SecurityToken = strings.TrimSpace(entry.SecurityToken)
+		entry.RefreshToken = strings.TrimSpace(entry.RefreshToken)
+		entry.Prefix = normalizeModelPrefix(entry.Prefix)
+		entry.BaseURL = strings.TrimSpace(entry.BaseURL)
+		entry.ProxyURL = strings.TrimSpace(entry.ProxyURL)
+		entry.Headers = NormalizeHeaders(entry.Headers)
+		entry.ExcludedModels = NormalizeExcludedModels(entry.ExcludedModels)
+		if entry.APIKey == "" || entry.SecretKey == "" {
+			continue
+		}
+		uniqueKey := entry.APIKey + "|" + entry.BaseURL
+		if _, exists := seen[uniqueKey]; exists {
+			continue
+		}
+		seen[uniqueKey] = struct{}{}
+		out = append(out, *entry)
+	}
+	cfg.CodeArtsKey = out
+}
+
 // SanitizeTraeKeys normalizes TRAE SOLO CN desktop credentials.
 func (cfg *Config) SanitizeTraeKeys() {
 	if cfg == nil {

@@ -505,6 +505,8 @@ func cloneModelInfos(models []*ModelInfo) []*ModelInfo {
 //   - deepseek-web
 //   - antigravity
 //   - xai
+//   - xiaohuanxiong
+//   - codearts
 func GetStaticModelDefinitionsByChannel(channel string) []*ModelInfo {
 	key := strings.ToLower(strings.TrimSpace(channel))
 	switch key {
@@ -530,6 +532,8 @@ func GetStaticModelDefinitionsByChannel(channel string) []*ModelInfo {
 		return GetDeepSeekWebModels()
 	case constant.Xiaohuanxiong:
 		return GetXiaohuanxiongModels()
+	case constant.CodeArts:
+		return GetCodeArtsModels()
 	case "antigravity":
 		return GetAntigravityModels()
 	case "xai", "x-ai", "grok":
@@ -576,6 +580,8 @@ func LookupStaticModelInfo(modelID string) *ModelInfo {
 		data.XAI,
 		data.Devin,
 		staticDevinModels,
+		GetXiaohuanxiongModels(),
+		GetCodeArtsModels(),
 	}
 	for _, models := range allModels {
 		for _, m := range models {

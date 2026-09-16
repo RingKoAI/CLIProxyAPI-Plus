@@ -188,6 +188,17 @@ func (s *Service) registerModelsForAuthWithCache(ctx context.Context, a *coreaut
 			}
 		}
 		models = applyExcludedModels(models, excluded)
+	case constant.CodeArts:
+		models = registry.GetCodeArtsModels()
+		if entry := s.resolveConfigCodeArtsKey(a); entry != nil {
+			if len(entry.Models) > 0 {
+				models = buildCodeArtsConfigModels(entry)
+			}
+			if authKind == "apikey" {
+				excluded = entry.ExcludedModels
+			}
+		}
+		models = applyExcludedModels(models, excluded)
 	case constant.Xiaohuanxiong:
 		models = registry.GetXiaohuanxiongModels()
 		if entry := s.resolveConfigXiaohuanxiongKey(a); entry != nil {
@@ -991,6 +1002,42 @@ func buildDeepSeekWebConfigModels(entry *config.DeepSeekWebKey) []*ModelInfo {
 		return nil
 	}
 	return buildConfigModels(entry.Models, constant.DeepSeekWeb, "openai", constant.DeepSeekWeb)
+}
+
+func (s *Service) resolveConfigCodeArtsKey(auth *coreauth.Auth) *config.CodeArtsKey {
+	if s == nil || s.cfg == nil || auth == nil {
+		return nil
+	}
+	if auth.AuthKind() != coreauth.AuthKindAPIKey && auth.AuthKind() != coreauth.AuthKindOAuth {
+		return nil
+	}
+	var attrKey, attrBase string
+	if auth.Attributes != nil {
+		attrKey = strings.TrimSpace(auth.Attributes["api_key"])
+		attrBase = strings.TrimSpace(auth.Attributes["base_url"])
+	}
+	for i := range s.cfg.CodeArtsKey {
+		entry := &s.cfg.CodeArtsKey[i]
+		cfgKey := strings.TrimSpace(entry.APIKey)
+		cfgBase := strings.TrimSpace(entry.BaseURL)
+		if attrKey != "" {
+			if strings.EqualFold(cfgKey, attrKey) && (cfgBase == "" || strings.EqualFold(cfgBase, attrBase)) {
+				return entry
+			}
+			continue
+		}
+		if attrBase != "" && strings.EqualFold(cfgBase, attrBase) {
+			return entry
+		}
+	}
+	return nil
+}
+
+func buildCodeArtsConfigModels(entry *config.CodeArtsKey) []*ModelInfo {
+	if entry == nil {
+		return nil
+	}
+	return buildConfigModels(entry.Models, constant.CodeArts, "openai", constant.CodeArts)
 }
 
 func buildXiaohuanxiongConfigModels(entry *config.XiaohuanxiongKey) []*ModelInfo {

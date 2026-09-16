@@ -183,6 +183,9 @@ func LoadConfigOptional(configFile string, optional bool) (*Config, error) {
 	// Sanitize Xiaohuanxiong keys: drop entries without an access token.
 	cfg.SanitizeXiaohuanxiongKeys()
 
+	// Sanitize CodeArts keys: drop entries without an access key.
+	cfg.SanitizeCodeArtsKeys()
+
 	// Sanitize Trae keys: drop entries without an access token.
 	cfg.SanitizeTraeKeys()
 

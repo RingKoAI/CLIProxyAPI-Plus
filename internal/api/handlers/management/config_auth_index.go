@@ -321,6 +321,41 @@ func (h *Handler) xiaohuanxiongKeysWithAuthIndex() []xiaohuanxiongKeyWithAuthInd
 	return out
 }
 
+type codeArtsKeyWithAuthIndex struct {
+	config.CodeArtsKey
+	AuthIndex string `json:"auth-index,omitempty"`
+}
+
+func (h *Handler) codeArtsKeysWithAuthIndex() []codeArtsKeyWithAuthIndex {
+	if h == nil {
+		return nil
+	}
+	liveIndexByID := h.liveAuthIndexByID()
+
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if h.cfg == nil {
+		return nil
+	}
+
+	entries := h.cfg.CodeArtsKey
+	idGen := synthesizer.NewStableIDGenerator()
+	out := make([]codeArtsKeyWithAuthIndex, len(entries))
+	for i := range entries {
+		entry := entries[i]
+		authIndex := ""
+		if key := strings.TrimSpace(entry.APIKey); key != "" {
+			id, _ := idGen.Next("codearts:apikey", key, entry.BaseURL)
+			authIndex = liveIndexByID[id]
+		}
+		out[i] = codeArtsKeyWithAuthIndex{
+			CodeArtsKey: entry,
+			AuthIndex:   authIndex,
+		}
+	}
+	return out
+}
+
 func (h *Handler) vertexCompatKeysWithAuthIndex() []vertexCompatKeyWithAuthIndex {
 	if h == nil {
 		return nil

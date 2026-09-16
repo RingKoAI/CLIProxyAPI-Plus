@@ -179,7 +179,7 @@ force-model-prefix: false
 #   # Optional provider allowlist (empty = all providers).
 #   # Identifiers: gemini, codex, claude, codebuddy-cn, codebuddy-ai, deepseek-web,
 #   # trae, kimi, aistudio, vertex, antigravity, devin, xai, qwen-web,
-#   # xiaohuanxiong, or any openai-compatibility provider name.
+#   # xiaohuanxiong, codearts, or any openai-compatibility provider name.
 #   providers:
 #     - claude
 #     - gemini
@@ -694,6 +694,28 @@ nonstream-keepalive-interval: 0
 #     models:                             # optional: override the built-in catalog
 #       - name: "glm-5-3"
 #         alias: "glm-5-3"
+#
+# Huawei Cloud CodeArts (CodeArts Work desktop client) credential.
+# The login flow is OAuth2 + PKCE + DPoP against Huawei Cloud STS and returns a
+# *temporary* AK/SK/security-token triple; every business request is then signed
+# with Huawei Cloud SDK-HMAC-SHA256. Start the flow with the management API
+# GET /v0/management/codearts-auth-url, or paste a triple copied from a logged-in
+# client. When refresh-token is present the triple is rotated automatically
+# against https://sts.cn-north-4.myhuaweicloud.com/v1/oauth2/tokens.
+# codearts-api-key:
+#   - api-key: "YOUR_TEMP_ACCESS_KEY_ID"
+#     secret-key: "YOUR_TEMP_SECRET_ACCESS_KEY"
+#     security-token: "YOUR_TEMP_SECURITY_TOKEN"
+#     refresh-token: "YOUR_REFRESH_TOKEN" # optional: enables automatic rotation
+#     base-url: "https://snap-access.cn-north-4.myhuaweicloud.com/api/v2" # optional
+#     weight: 1
+#     prefix: "ca"                        # optional: require ca/GLM-5.2
+#     proxy-url: "socks5://proxy.example.com:1080" # optional per-token proxy
+#     excluded-models:
+#       - "Auto"
+#     models:                             # optional: override the built-in catalog
+#       - name: "GLM-5.2"
+#         alias: "GLM-5.2"
 #
 # TRAE SOLO CN desktop credential. Copy the Cloud-IDE-JWT access token from a
 # logged-in desktop client (or use the login.sh flow from traework2api) and paste

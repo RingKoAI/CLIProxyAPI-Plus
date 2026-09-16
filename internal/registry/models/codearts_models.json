@@ -1,0 +1,88 @@
+{
+  "codearts": [
+    {
+      "id": "GLM-5.2",
+      "object": "model",
+      "created": 1789000000,
+      "owned_by": "huaweicloud",
+      "type": "codearts",
+      "display_name": "GLM-5.2",
+      "description": "CodeArts deep-reasoning model for complex tasks",
+      "context_length": 202752,
+      "max_completion_tokens": 131072,
+      "supportedInputModalities": [
+        "text"
+      ],
+      "supportedOutputModalities": [
+        "text"
+      ],
+      "thinking": {
+        "zero_allowed": true,
+        "levels": [
+          "low",
+          "medium",
+          "high"
+        ]
+      }
+    },
+    {
+      "id": "GLM-5.1",
+      "object": "model",
+      "created": 1789000000,
+      "owned_by": "huaweicloud",
+      "type": "codearts",
+      "display_name": "GLM-5.1",
+      "description": "CodeArts general-purpose model for everyday coding and chat",
+      "context_length": 202752,
+      "max_completion_tokens": 131072,
+      "supportedInputModalities": [
+        "text"
+      ],
+      "supportedOutputModalities": [
+        "text"
+      ]
+    },
+    {
+      "id": "GLM-5.2-ZX",
+      "object": "model",
+      "created": 1789000000,
+      "owned_by": "huaweicloud",
+      "type": "codearts",
+      "display_name": "GLM-5.2-ZX",
+      "description": "CodeArts priority channel with lower latency",
+      "context_length": 202752,
+      "max_completion_tokens": 131072,
+      "supportedInputModalities": [
+        "text"
+      ],
+      "supportedOutputModalities": [
+        "text"
+      ],
+      "thinking": {
+        "zero_allowed": true,
+        "levels": [
+          "low",
+          "medium",
+          "high"
+        ]
+      }
+    },
+    {
+      "id": "Auto",
+      "object": "model",
+      "created": 1789000000,
+      "owned_by": "huaweicloud",
+      "type": "codearts",
+      "display_name": "Auto",
+      "description": "Automatically route to the most suitable model",
+      "context_length": 131072,
+      "max_completion_tokens": 65536,
+      "supportedInputModalities": [
+        "text"
+      ],
+      "supportedOutputModalities": [
+        "text"
+      ]
+    }
+  ]
+}

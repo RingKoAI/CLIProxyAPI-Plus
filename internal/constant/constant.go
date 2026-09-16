@@ -44,4 +44,10 @@ const (
 	// assistant provider identifier. It authenticates with the desktop-app
 	// OAuth authorization-code flow against xiaohuanxiong.com.
 	Xiaohuanxiong = "xiaohuanxiong"
+
+	// CodeArts represents the Huawei Cloud CodeArts (CodeArts Work desktop
+	// client) provider identifier. It authenticates with an OAuth2 + PKCE +
+	// DPoP flow against Huawei Cloud STS, which returns a temporary AK/SK
+	// credential triple used to sign every subsequent request.
+	CodeArts = "codearts"
 )

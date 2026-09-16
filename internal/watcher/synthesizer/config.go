@@ -36,6 +36,11 @@ const xiaohuanxiongDefaultBaseURL = "https://xiaohuanxiong.com/api/web/llm/v2"
 
 // traeDefaultBaseURL is the TRAE SOLO CN desktop agent gateway used when a
 // trae-api-key entry does not specify its own base-url.
+// codeArtsDefaultBaseURL is the CodeArts InferHub OpenAI-compatible gateway used
+// when a codearts-api-key entry does not set base-url. The executor appends
+// "/chat/completions", yielding .../api/v2/chat/completions.
+const codeArtsDefaultBaseURL = "https://snap-access.cn-north-4.myhuaweicloud.com/api/v2"
+
 const traeDefaultBaseURL = "https://trae-api-cn.mchost.guru"
 
 // traeDefaultAPIHost is the ExchangeToken / GetUserInfo host used when a
@@ -86,6 +91,8 @@ func (s *ConfigSynthesizer) Synthesize(ctx *SynthesisContext) ([]*coreauth.Auth,
 	out = append(out, s.synthesizeDeepSeekWebKeys(ctx)...)
 	// Xiaohuanxiong (SenseTime Raccoon) credentials
 	out = append(out, s.synthesizeXiaohuanxiongKeys(ctx)...)
+	// CodeArts (Huawei Cloud CodeArts Work) credentials
+	out = append(out, s.synthesizeCodeArtsKeys(ctx)...)
 	// TRAE SOLO CN desktop credentials
 	out = append(out, s.synthesizeTraeKeys(ctx)...)
 	// OpenAI-compat
@@ -446,6 +453,68 @@ func (s *ConfigSynthesizer) synthesizeXiaohuanxiongKeys(ctx *SynthesisContext) [
 		if len(a.Metadata) == 0 {
 			a.Metadata = nil
 		}
+		out = append(out, a)
+	}
+	return out
+}
+
+// synthesizeCodeArtsKeys creates Auth entries for Huawei Cloud CodeArts
+// credentials produced by the OAuth login flow (or pasted manually).
+func (s *ConfigSynthesizer) synthesizeCodeArtsKeys(ctx *SynthesisContext) []*coreauth.Auth {
+	cfg := ctx.Config
+	now := ctx.Now
+	idGen := ctx.IDGenerator
+
+	out := make([]*coreauth.Auth, 0, len(cfg.CodeArtsKey))
+	for i := range cfg.CodeArtsKey {
+		entry := cfg.CodeArtsKey[i]
+		accessKey := strings.TrimSpace(entry.APIKey)
+		secretKey := strings.TrimSpace(entry.SecretKey)
+		if accessKey == "" || secretKey == "" {
+			continue
+		}
+		baseURL := strings.TrimSpace(entry.BaseURL)
+		if baseURL == "" {
+			baseURL = codeArtsDefaultBaseURL
+		}
+		prefix := strings.TrimSpace(entry.Prefix)
+		id, token := idGen.Next("codearts:apikey", accessKey, baseURL)
+		attrs := map[string]string{
+			"source":         fmt.Sprintf("config:codearts[%s]", token),
+			"api_key":        accessKey,
+			"secret_key":     secretKey,
+			"security_token": strings.TrimSpace(entry.SecurityToken),
+			"base_url":       baseURL,
+			"config_index":   strconv.Itoa(i),
+		}
+		metadata := map[string]any{
+			"type":           constant.CodeArts,
+			"auth_kind":      coreauth.AuthKindOAuth,
+			"access_key":     accessKey,
+			"secret_key":     secretKey,
+			"security_token": strings.TrimSpace(entry.SecurityToken),
+			"base_url":       baseURL,
+		}
+		if refreshToken := strings.TrimSpace(entry.RefreshToken); refreshToken != "" {
+			metadata["refresh_token"] = refreshToken
+		}
+		if entry.DisableCooling != nil {
+			metadata["disable_cooling"] = *entry.DisableCooling
+		}
+		if entry.Priority != 0 {
+			attrs["priority"] = strconv.Itoa(entry.Priority)
+		}
+		addWeightToAttrs(entry.Weight, attrs)
+		if hash := diff.ComputeCodeBuddyCNModelsHash(entry.Models); hash != "" {
+			attrs["models_hash"] = hash
+		}
+		addConfigHeadersToAttrs(entry.Headers, attrs)
+		a := &coreauth.Auth{
+			ID: id, Provider: constant.CodeArts, Label: "codearts-credentials",
+			Prefix: prefix, Status: coreauth.StatusActive, ProxyURL: strings.TrimSpace(entry.ProxyURL),
+			Attributes: attrs, Metadata: metadata, CreatedAt: now, UpdatedAt: now,
+		}
+		ApplyAuthExcludedModelsMeta(a, cfg, entry.ExcludedModels, "apikey")
 		out = append(out, a)
 	}
 	return out

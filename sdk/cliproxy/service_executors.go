@@ -306,6 +306,8 @@ func (s *Service) registerExecutorForAuth(a *coreauth.Auth, forceReplace bool) {
 		s.coreManager.RegisterExecutor(executor.NewDeepSeekWebExecutor(cfg))
 	case constant.Xiaohuanxiong:
 		s.coreManager.RegisterExecutor(executor.NewXiaohuanxiongExecutor(cfg))
+	case constant.CodeArts:
+		s.coreManager.RegisterExecutor(executor.NewCodeArtsExecutor(cfg))
 	case constant.Trae:
 		s.coreManager.RegisterExecutor(executor.NewTraeExecutor(cfg))
 	case "xai":

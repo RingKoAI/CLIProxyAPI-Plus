@@ -142,6 +142,9 @@ type Config struct {
 	// XiaohuanxiongKey defines SenseTime Xiaohuanxiong (Raccoon) credentials.
 	XiaohuanxiongKey []XiaohuanxiongKey `yaml:"xiaohuanxiong-api-key" json:"xiaohuanxiong-api-key"`
 
+	// CodeArtsKey defines Huawei Cloud CodeArts (CodeArts Work) credentials.
+	CodeArtsKey []CodeArtsKey `yaml:"codearts-api-key" json:"codearts-api-key"`
+
 	// TraeKey defines TRAE SOLO CN desktop credentials.
 	TraeKey []TraeKey `yaml:"trae-api-key" json:"trae-api-key"`
 

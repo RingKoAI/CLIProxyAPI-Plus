@@ -681,6 +681,11 @@ type CodeBuddyCNKey struct {
 	// APIKey is the authentication key for accessing CodeBuddy CN.
 	APIKey string `yaml:"api-key" json:"api-key"`
 
+	// RefreshToken optionally enables automatic credential rotation for providers
+	// whose APIKey expires (e.g. CodeArts rotates a temporary security token).
+	// Providers that never rotate leave this empty.
+	RefreshToken string `yaml:"refresh-token,omitempty" json:"refresh-token,omitempty"`
+
 	// Priority controls selection preference when multiple credentials match.
 	Priority int `yaml:"priority,omitempty" json:"priority,omitempty"`
 
@@ -790,6 +795,58 @@ type XiaohuanxiongKey struct {
 
 // XiaohuanxiongModel uses the shared static/configured model mapping shape.
 type XiaohuanxiongModel = CodeBuddyCNModel
+
+// CodeArtsKey represents a Huawei Cloud CodeArts (CodeArts Work desktop client)
+// credential produced by the OAuth login flow.
+//
+// CodeArts does not issue a bearer token for the LLM. The login flow returns a
+// temporary Huawei Cloud AK/SK/security-token triple, and every business request
+// is signed with Huawei Cloud's SDK-HMAC-SHA256 scheme. The three credential
+// fields below plus the DPoP key pair are therefore all required to issue or
+// rotate requests.
+type CodeArtsKey struct {
+	// APIKey is the temporary Huawei Cloud access key id (access_key_id).
+	APIKey string `yaml:"api-key" json:"api-key"`
+
+	// SecretKey is the temporary Huawei Cloud secret access key (secret_access_key).
+	SecretKey string `yaml:"secret-key,omitempty" json:"secret-key,omitempty"`
+
+	// SecurityToken is the temporary Huawei Cloud security token (X-Security-Token).
+	SecurityToken string `yaml:"security-token,omitempty" json:"security-token,omitempty"`
+
+	// RefreshToken rotates the temporary credential triple.
+	RefreshToken string `yaml:"refresh-token,omitempty" json:"refresh-token,omitempty"`
+
+	// Priority controls selection preference when multiple credentials match.
+	Priority int `yaml:"priority,omitempty" json:"priority,omitempty"`
+
+	// Weight controls proportional selection under weighted-round-robin.
+	Weight *int `yaml:"weight,omitempty" json:"weight,omitempty"`
+
+	// Prefix optionally namespaces models for this credential (e.g. "ca/GLM-5.2").
+	Prefix string `yaml:"prefix,omitempty" json:"prefix,omitempty"`
+
+	// BaseURL overrides the LLM gateway base URL.
+	BaseURL string `yaml:"base-url,omitempty" json:"base-url,omitempty"`
+
+	// ProxyURL overrides the global proxy setting for this credential.
+	ProxyURL string `yaml:"proxy-url,omitempty" json:"proxy-url,omitempty"`
+
+	// Models defines upstream model names and aliases for request routing.
+	Models []CodeArtsModel `yaml:"models,omitempty" json:"models,omitempty"`
+
+	// Headers optionally adds extra HTTP headers for requests sent with this credential.
+	Headers map[string]string `yaml:"headers,omitempty" json:"headers,omitempty"`
+
+	// ExcludedModels lists model IDs that should be excluded for this provider.
+	ExcludedModels []string `yaml:"excluded-models,omitempty" json:"excluded-models,omitempty"`
+
+	// DisableCooling overrides the global cooling policy for this credential when set.
+	DisableCooling *bool `yaml:"disable-cooling,omitempty" json:"disable-cooling,omitempty"`
+}
+
+// CodeArtsModel uses the shared static/configured model mapping shape.
+type CodeArtsModel = CodeBuddyCNModel
 
 // CodeBuddyAIKey uses the API-key entry shape for the CodeBuddy AI
 // (international, https://www.codebuddy.ai) gateway. The upstream is the same

@@ -1,0 +1,475 @@
+package codearts
+
+import (
+	"context"
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
+	"strings"
+	"testing"
+)
+
+// newTestClient builds a client pointed at a test server.
+func newTestClient(t *testing.T, handler http.Handler) (*Client, *httptest.Server) {
+	t.Helper()
+	server := httptest.NewServer(handler)
+	client := NewClient(nil)
+	client.stsHost = server.URL
+	client.portalHost = server.URL
+	client.snapHost = server.URL
+	client.benefitURL = server.URL
+	return client, server
+}
+
+// signedHeaderPresent asserts the request carried a Huawei Cloud signature.
+func signedHeaderPresent(r *http.Request) bool {
+	return strings.HasPrefix(r.Header.Get("Authorization"), Algorithm+" Access=")
+}
+
+// TestBuildAuthorizationURL pins the portal authorize parameters.
+func TestBuildAuthorizationURL(t *testing.T) {
+	client := NewClient(nil)
+	url, errBuild := client.BuildAuthorizationURL(strings.Repeat("ab", 64), "10000", "ticket123")
+	if errBuild != nil {
+		t.Fatalf("build url: %v", errBuild)
+	}
+	for _, fragment := range []string{
+		"/portal/authorize?",
+		"client_id=codearts",
+		"uri_scheme=codearts",
+		"port=10000",
+		"code_challenge_method=SHA-256",
+		"ticket_id=ticket123",
+		"plugin-name=snap_AIIDE",
+		"plugin-version=5.1.0",
+		"theme=2",
+		"locale=zh-cn",
+	} {
+		if !strings.Contains(url, fragment) {
+			t.Errorf("authorize url missing %q:\n%s", fragment, url)
+		}
+	}
+}
+
+// TestExchangeCodeParsesCredentials pins the STS response mapping.
+func TestExchangeCodeParsesCredentials(t *testing.T) {
+	client, server := newTestClient(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != TokenPath {
+			t.Errorf("unexpected path: %s", r.URL.Path)
+		}
+		if !signedHeaderPresent(r) && r.Header.Get("DPoP") == "" {
+			// the exchange is DPoP-authenticated, not HMAC signed
+			t.Errorf("exchange request is missing the DPoP proof")
+		}
+		if r.Header.Get("DPoP") == "" {
+			t.Errorf("DPoP header is required")
+		}
+		_ = r.ParseForm()
+		if r.Form.Get("grant_type") != "authorization_code" {
+			t.Errorf("grant_type = %q", r.Form.Get("grant_type"))
+		}
+		if r.Form.Get("redirect_uri") != CallbackURL("10000") {
+			t.Errorf("redirect_uri = %q", r.Form.Get("redirect_uri"))
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{
+			"refresh_token": "rt-1",
+			"credentials": {
+				"access_key_id": "AK123",
+				"secret_access_key": "SK456",
+				"security_token": "ST789",
+				"expiration": "2030-01-02T03:04:05Z"
+			}
+		}`))
+	}))
+	defer server.Close()
+
+	keyPair, errKey := GenerateDpopKeyPair()
+	if errKey != nil {
+		t.Fatalf("generate key pair: %v", errKey)
+	}
+	token, errExchange := client.ExchangeCode(context.Background(), "the-code", "verifier", keyPair, "10000")
+	if errExchange != nil {
+		t.Fatalf("exchange: %v", errExchange)
+	}
+	if token.AccessKey != "AK123" || token.SecretKey != "SK456" || token.SecurityToken != "ST789" {
+		t.Fatalf("unexpected credentials: %+v", token)
+	}
+	if token.RefreshToken != "rt-1" {
+		t.Fatalf("refresh token = %q", token.RefreshToken)
+	}
+	if token.ExpiresAt.UTC().Format("2006-01-02T15:04:05Z") != "2030-01-02T03:04:05Z" {
+		t.Fatalf("expiry = %s", token.ExpiresAt)
+	}
+	if token.CodeVerifier != "verifier" {
+		t.Fatalf("code verifier = %q", token.CodeVerifier)
+	}
+}
+
+// TestExchangeCodeSurfacesErrors pins the STS error mapping.
+func TestExchangeCodeSurfacesErrors(t *testing.T) {
+	client, server := newTestClient(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusBadRequest)
+		_, _ = w.Write([]byte(`{"error":{"message":"invalid authorization code"}}`))
+	}))
+	defer server.Close()
+
+	keyPair, _ := GenerateDpopKeyPair()
+	_, errExchange := client.ExchangeCode(context.Background(), "bad", "verifier", keyPair, "10000")
+	if errExchange == nil {
+		t.Fatal("expected an error")
+	}
+	if !strings.Contains(errExchange.Error(), "invalid authorization code") {
+		t.Fatalf("unexpected error: %v", errExchange)
+	}
+}
+
+// TestExchangeCodeRequiresDpopKey pins that a missing key is rejected locally.
+func TestExchangeCodeRequiresDpopKey(t *testing.T) {
+	client := NewClient(nil)
+	if _, errExchange := client.ExchangeCode(context.Background(), "code", "verifier", nil, "10000"); errExchange == nil {
+		t.Fatal("expected an error when the DPoP key pair is missing")
+	}
+}
+
+// TestRefreshRequiresDpopKey pins that refresh cannot silently proceed.
+func TestRefreshRequiresDpopKey(t *testing.T) {
+	client := NewClient(nil)
+	if _, errRefresh := client.Refresh(context.Background(), "rt", "verifier", nil); errRefresh == nil {
+		t.Fatal("expected an error when the DPoP key pair is missing")
+	}
+}
+
+// TestGetUserInfoParsesPrincipal pins the caller-identity mapping and that the
+// request is HMAC signed.
+func TestGetUserInfoParsesPrincipal(t *testing.T) {
+	var sawSignature bool
+	client, server := newTestClient(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != CallerIdentityPath {
+			t.Errorf("unexpected path: %s", r.URL.Path)
+		}
+		sawSignature = signedHeaderPresent(r)
+		if r.Header.Get(SecurityTokenHeader) != "ST789" {
+			t.Errorf("missing security token header")
+		}
+		_, _ = w.Write([]byte(`{
+			"principal_urn": "iam::1234567890:user/alice",
+			"principal_id": "pid-1",
+			"account_id": "acct-9",
+			"station_type": "HC"
+		}`))
+	}))
+	defer server.Close()
+
+	info, errInfo := client.GetUserInfo(context.Background(), "AK123", "SK456", "ST789")
+	if errInfo != nil {
+		t.Fatalf("get user info: %v", errInfo)
+	}
+	if !sawSignature {
+		t.Fatal("caller-identity request was not HMAC signed")
+	}
+	if info.UserName != "alice" {
+		t.Fatalf("user name = %q, want alice", info.UserName)
+	}
+	if info.UserID != "pid-1" || info.DomainID != "acct-9" {
+		t.Fatalf("unexpected identity: %+v", info)
+	}
+}
+
+// TestUrnLeafMatchesDesktopClient pins the principal URN parsing rule.
+//
+// The desktop client takes the text after the last ':' and then, when a '/'
+// remains, the text after the FIRST '/' — so an agency URN keeps its inner
+// slash. Matching that exactly avoids diverging on delegated (agency) accounts.
+func TestUrnLeafMatchesDesktopClient(t *testing.T) {
+	cases := map[string]string{
+		"iam::0123456789:user/alice":           "alice",
+		"iam::0123456789:agency/team/deployer": "team/deployer",
+		"plain-name":                           "plain-name",
+		"":                                     "",
+	}
+	for urn, want := range cases {
+		if got := urnLeaf(urn); got != want {
+			t.Errorf("urnLeaf(%q) = %q, want %q", urn, got, want)
+		}
+	}
+}
+
+// TestFetchBuiltinModelsParsesCatalog pins the builtin catalog mapping.
+func TestFetchBuiltinModelsParsesCatalog(t *testing.T) {
+	client, server := newTestClient(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != BuiltinModelsPath {
+			t.Errorf("unexpected path: %s", r.URL.Path)
+		}
+		if !signedHeaderPresent(r) {
+			t.Error("catalog request was not HMAC signed")
+		}
+		if r.Header.Get("Agent-Type") != AgentTypePromptCenter {
+			t.Errorf("Agent-Type = %q", r.Header.Get("Agent-Type"))
+		}
+		_, _ = w.Write([]byte(`{"builtinModels":[
+			{"model_id":"GLM-5.2","model_name":"GLM-5.2","context_window":202752,"input_context_window":196608,"output_context_window":131072,"model_category":"文本","supports_images":false},
+			{"model_id":"Qwen3-VL-235B","model_name":"Qwen3-VL-235B","model_category":"图片理解","supports_images":true},
+			{"model_id":"","model_name":""}
+		]}`))
+	}))
+	defer server.Close()
+
+	models, errModels := client.FetchBuiltinModels(context.Background(), Credentials{AccessKey: "AK", SecretKey: "SK"}, "zh-cn")
+	if errModels != nil {
+		t.Fatalf("fetch models: %v", errModels)
+	}
+	if len(models) != 2 {
+		t.Fatalf("model count = %d, want 2", len(models))
+	}
+	if models[0].ID != "GLM-5.2" {
+		t.Fatalf("model id = %q", models[0].ID)
+	}
+	if models[0].ContextWindow != 202752 || models[0].InputContextWindow != 196608 || models[0].OutputContextWindow != 131072 {
+		t.Fatalf("unexpected limits: %+v", models[0])
+	}
+	if models[0].Provider != "inferhub-provider" {
+		t.Fatalf("provider = %q, want inferhub-provider", models[0].Provider)
+	}
+	if !models[1].SupportsImages {
+		t.Fatal("multimodal flag was not preserved")
+	}
+}
+
+// TestFetchAgentModelsResolvesCodeAgent pins the two-step agent lookup.
+func TestFetchAgentModelsResolvesCodeAgent(t *testing.T) {
+	var detailAgent string
+	client, server := newTestClient(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/v1/agent-center/agents/useragents":
+			_, _ = w.Write([]byte(`{"agents":[
+				{"agent_id":"other","agent_name":"Other","show_in_ide":true},
+				{"agent_id":"code-agent-1","agent_name":"CodeAgent","alias":{"alias_zh_cn":"智能体"},"show_in_ide":true}
+			]}`))
+		case "/v1/agent-center/agents/detail":
+			detailAgent = r.URL.Query().Get("agent_id")
+			_, _ = w.Write([]byte(`{"gpts":{"models":[{
+				"model_name":"GLM-5.2","model_type":"builtin","think_level":"high",
+				"model_parameters":{"model_id":"GLM-5.2","context_window":202752,"output_context_window":131072,"supports_images":false}
+			}]}}`))
+		default:
+			t.Errorf("unexpected path: %s", r.URL.Path)
+		}
+	}))
+	defer server.Close()
+
+	models, errModels := client.FetchAgentModels(context.Background(), Credentials{AccessKey: "AK", SecretKey: "SK"}, "zh-cn")
+	if errModels != nil {
+		t.Fatalf("fetch agent models: %v", errModels)
+	}
+	if detailAgent != "code-agent-1" {
+		t.Fatalf("detail agent_id = %q, want code-agent-1", detailAgent)
+	}
+	if len(models) != 1 || models[0].ID != "GLM-5.2" {
+		t.Fatalf("unexpected models: %+v", models)
+	}
+	if models[0].ThinkLevel != "high" {
+		t.Fatalf("think level = %q", models[0].ThinkLevel)
+	}
+}
+
+// TestFetchFreeBenefitModels pins the gateway/config mapping and that a disabled
+// program returns an empty list without an error.
+func TestFetchFreeBenefitModels(t *testing.T) {
+	client, server := newTestClient(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{"error_code":"0000","result":{
+			"base_url":"https://free.example.com/api/v2",
+			"models":[{"model_id":"Free-1","model_name":"Free One","context_window":128000,"max_tokens":8192}]
+		}}`))
+	}))
+	defer server.Close()
+
+	models, errModels := client.FetchFreeBenefitModels(context.Background(), Credentials{AccessKey: "AK", SecretKey: "SK"})
+	if errModels != nil {
+		t.Fatalf("free models: %v", errModels)
+	}
+	if len(models) != 1 {
+		t.Fatalf("model count = %d", len(models))
+	}
+	if !models[0].IsFreeBenefit || models[0].OutputContextWindow != 8192 {
+		t.Fatalf("unexpected free model: %+v", models[0])
+	}
+	if models[0].BaseURL != "https://free.example.com/api/v2" {
+		t.Fatalf("free base url = %q", models[0].BaseURL)
+	}
+
+	disabled, server2 := newTestClient(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{"error_code":"9999","result":{}}`))
+	}))
+	defer server2.Close()
+	list, errList := disabled.FetchFreeBenefitModels(context.Background(), Credentials{AccessKey: "AK", SecretKey: "SK"})
+	if errList != nil || len(list) != 0 {
+		t.Fatalf("disabled program should yield no models: %v %v", list, errList)
+	}
+}
+
+// TestListActivitiesAndDailyCheckIn pins the welfare read + claim + confirm flow.
+func TestListActivitiesAndDailyCheckIn(t *testing.T) {
+	var claimBody map[string]any
+	var confirmed bool
+	client, server := newTestClient(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case WelfareDeliveryPath:
+			if r.URL.Query().Get("channel") != "DESKTOP" {
+				t.Errorf("channel = %q", r.URL.Query().Get("channel"))
+			}
+			_, _ = w.Write([]byte(`{"code":0,"data":{"items":[
+				{"campaignId":"login-x","type":"USER_LOGIN","status":"ELIGIBLE","claimable":true,"benefitAmount":100},
+				{"campaignId":"daily-1","type":"DAILY_CLAIM","status":"ELIGIBLE","claimable":true,"benefitAmount":1000}
+			]}}`))
+		case WelfareClaimPath:
+			_ = json.NewDecoder(r.Body).Decode(&claimBody)
+			_, _ = w.Write([]byte(`{"code":0,"data":{"userBenefitId":"ub-1"}}`))
+		case WelfareConfirmPath:
+			confirmed = true
+			_, _ = w.Write([]byte(`{"code":0,"data":{}}`))
+		default:
+			t.Errorf("unexpected path: %s", r.URL.Path)
+		}
+	}))
+	defer server.Close()
+
+	activities, errActivities := client.ListActivities(context.Background(), Credentials{AccessKey: "AK", SecretKey: "SK"})
+	if errActivities != nil {
+		t.Fatalf("list activities: %v", errActivities)
+	}
+	if len(activities) != 2 {
+		t.Fatalf("activity count = %d", len(activities))
+	}
+	if !activities[1].ClaimableNow() || activities[0].ClaimableNow() {
+		t.Fatal("claimable detection is wrong: only daily_claim is claimable")
+	}
+
+	result, errCheckIn := client.DailyCheckIn(context.Background(), Credentials{AccessKey: "AK", SecretKey: "SK"})
+	if errCheckIn != nil {
+		t.Fatalf("daily check-in: %v", errCheckIn)
+	}
+	if !result.Claimed || result.CampaignID != "daily-1" {
+		t.Fatalf("unexpected check-in result: %+v", result)
+	}
+	if result.BenefitAmount != 1000 {
+		t.Fatalf("benefit amount = %d, want 1000", result.BenefitAmount)
+	}
+	if claimBody["campaignId"] != "daily-1" || claimBody["channel"] != "DESKTOP" {
+		t.Fatalf("unexpected claim body: %+v", claimBody)
+	}
+	if idempotentKey, _ := claimBody["idempotentKey"].(string); !strings.HasPrefix(idempotentKey, "claim_daily-1_") {
+		t.Fatalf("idempotent key = %q", idempotentKey)
+	}
+	if !confirmed {
+		t.Fatal("the claim was not confirmed")
+	}
+}
+
+// TestDailyCheckInReportsAlreadyClaimed pins the no-op path.
+func TestDailyCheckInReportsAlreadyClaimed(t *testing.T) {
+	client, server := newTestClient(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{"code":0,"data":{"items":[
+			{"campaignId":"daily-1","type":"DAILY_CLAIM","status":"CONFIRMED","claimable":true,"benefitAmount":1000}
+		]}}`))
+	}))
+	defer server.Close()
+
+	result, errCheckIn := client.DailyCheckIn(context.Background(), Credentials{AccessKey: "AK", SecretKey: "SK"})
+	if errCheckIn != nil {
+		t.Fatalf("daily check-in: %v", errCheckIn)
+	}
+	if result.Claimed || !result.AlreadyClaimed {
+		t.Fatalf("unexpected result: %+v", result)
+	}
+}
+
+// TestDailyCheckInFallsBackToBenefitAPI pins the developer-gateway fallback.
+func TestDailyCheckInFallsBackToBenefitAPI(t *testing.T) {
+	var hitBenefit bool
+	client, server := newTestClient(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case WelfareDeliveryPath:
+			w.WriteHeader(http.StatusNotFound)
+			_, _ = w.Write([]byte(`not found`))
+		case BenefitClaimPath:
+			hitBenefit = true
+			_, _ = w.Write([]byte(`{"error_code":"0000","result":{}}`))
+		default:
+			t.Errorf("unexpected path: %s", r.URL.Path)
+		}
+	}))
+	defer server.Close()
+
+	result, errCheckIn := client.DailyCheckIn(context.Background(), Credentials{AccessKey: "AK", SecretKey: "SK"})
+	if errCheckIn != nil {
+		t.Fatalf("daily check-in: %v", errCheckIn)
+	}
+	if !result.Claimed || !hitBenefit {
+		t.Fatalf("fallback was not used: %+v hit=%v", result, hitBenefit)
+	}
+}
+
+// TestBalanceUnwrapsResult pins the balance envelope mapping.
+func TestBalanceUnwrapsResult(t *testing.T) {
+	client, server := newTestClient(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != BalancePath {
+			t.Errorf("unexpected path: %s", r.URL.Path)
+		}
+		_, _ = w.Write([]byte(`{"error_code":"0000","result":{"remaining":42}}`))
+	}))
+	defer server.Close()
+
+	raw, errBalance := client.Balance(context.Background(), Credentials{AccessKey: "AK", SecretKey: "SK"})
+	if errBalance != nil {
+		t.Fatalf("balance: %v", errBalance)
+	}
+	if !strings.Contains(string(raw), `"remaining":42`) {
+		t.Fatalf("unexpected balance payload: %s", raw)
+	}
+}
+
+// TestGetAuthenticationByTicketParsesCredentials pins the ticket fallback shape.
+func TestGetAuthenticationByTicketParsesCredentials(t *testing.T) {
+	client, server := newTestClient(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/snap-manager"+TicketPath {
+			t.Errorf("unexpected path: %s", r.URL.Path)
+		}
+		if r.URL.Query().Get("ticket_id") != "tid" || r.URL.Query().Get("secret") != "sec" {
+			t.Errorf("unexpected query: %s", r.URL.RawQuery)
+		}
+		if r.Header.Get("plugin-name") != PluginName {
+			t.Errorf("plugin-name = %q", r.Header.Get("plugin-name"))
+		}
+		_, _ = w.Write([]byte(`{
+			"user_id":"u1","user_name":"alice","domain_id":"d1",
+			"credential":{"access":"AK","secret":"SK","securitytoken":"ST","expires_at":"2030-01-02T03:04:05Z"}
+		}`))
+	}))
+	defer server.Close()
+
+	token, errTicket := client.GetAuthenticationByTicket(context.Background(), "tid", "sec")
+	if errTicket != nil {
+		t.Fatalf("ticket: %v", errTicket)
+	}
+	if token.AccessKey != "AK" || token.SecretKey != "SK" || token.SecurityToken != "ST" {
+		t.Fatalf("unexpected credentials: %+v", token)
+	}
+}
+
+// TestParseTrackerRejectsUnknownActivityType keeps normalization explicit.
+func TestNormalizeActivityType(t *testing.T) {
+	cases := map[string]string{
+		"DAILY_CLAIM":       "daily_claim",
+		"daily_claim":       "daily_claim",
+		"USER_LOGIN":        "login",
+		"INVITE_USER":       "invite",
+		"STUDENT_CERTIFIED": "student_certify",
+		"weird":             "weird",
+	}
+	for input, want := range cases {
+		if got := normalizeActivityType(input); got != want {
+			t.Errorf("normalizeActivityType(%q) = %q, want %q", input, got, want)
+		}
+	}
+}
