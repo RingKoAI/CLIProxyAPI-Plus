@@ -138,35 +138,51 @@ func TestApplyCodeArtsOutgoingTransforms(t *testing.T) {
 		body          string
 		wantThinking  bool
 		wantToolPool  bool
-		wantMaxTokens bool
+		wantMaxTokens int
 	}{
 		{
 			name:          "streaming high effort enables thinking and tool_stream",
 			body:          `{"model":"GLM-5.2","stream":true,"reasoning_effort":"high","max_tokens":1024}`,
 			wantThinking:  true,
 			wantToolPool:  true,
-			wantMaxTokens: true,
+			wantMaxTokens: 1024,
 		},
 		{
 			name:          "streaming none effort disables thinking",
 			body:          `{"model":"GLM-5.2","stream":true,"reasoning_effort":"none","max_tokens":1024}`,
 			wantThinking:  false,
 			wantToolPool:  true,
-			wantMaxTokens: true,
+			wantMaxTokens: 1024,
 		},
 		{
 			name:          "absent max_tokens is filled from the catalog",
 			body:          `{"model":"GLM-5.2","stream":true}`,
 			wantThinking:  false,
 			wantToolPool:  true,
-			wantMaxTokens: true,
+			wantMaxTokens: codeArtsMaxOutputTokens,
 		},
 		{
 			name:          "non-streaming requests do not ask for tool streaming",
 			body:          `{"model":"GLM-5.2","stream":false,"max_tokens":512}`,
 			wantThinking:  false,
 			wantToolPool:  false,
-			wantMaxTokens: true,
+			wantMaxTokens: 512,
+		},
+		{
+			// The gateway rejects anything above 65536 with a RANGE_VALIDATOR
+			// 400, so an over-limit request must be clamped rather than failed.
+			name:          "over-limit max_tokens is clamped to the gateway ceiling",
+			body:          `{"model":"GLM-5.2","stream":false,"max_tokens":200000}`,
+			wantThinking:  false,
+			wantToolPool:  false,
+			wantMaxTokens: codeArtsMaxOutputTokens,
+		},
+		{
+			name:          "limit exactly at the ceiling is preserved",
+			body:          `{"model":"GLM-5.2","stream":false,"max_tokens":65536}`,
+			wantThinking:  false,
+			wantToolPool:  false,
+			wantMaxTokens: codeArtsMaxOutputTokens,
 		},
 	}
 	for _, tc := range tests {
@@ -182,8 +198,12 @@ func TestApplyCodeArtsOutgoingTransforms(t *testing.T) {
 			if gjson.GetBytes(out, "reasoning_effort").Exists() {
 				t.Fatalf("reasoning_effort leaked to the upstream body: %s", out)
 			}
-			if gjson.GetBytes(out, "max_tokens").Int() <= 0 {
-				t.Fatalf("max_tokens was not bounded: %s", out)
+			gotMax := gjson.GetBytes(out, "max_tokens").Int()
+			if gotMax != int64(tc.wantMaxTokens) {
+				t.Fatalf("max_tokens = %d, want %d (body=%s)", gotMax, tc.wantMaxTokens, out)
+			}
+			if gotMax > codeArtsMaxOutputTokens {
+				t.Fatalf("max_tokens %d exceeds the gateway ceiling %d: %s", gotMax, codeArtsMaxOutputTokens, out)
 			}
 			if effort := gjson.GetBytes([]byte(tc.body), "reasoning_effort"); effort.Exists() {
 				if got := gjson.GetBytes(out, "enable_thinking").Bool(); got != tc.wantThinking {

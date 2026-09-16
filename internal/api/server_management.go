@@ -215,6 +215,7 @@ func (s *Server) registerManagementRoutes() {
 		mgmt.POST("/xiaohuanxiong-auth-callback", s.mgmt.PostXiaohuanxiongAuthCallback)
 		mgmt.GET("/codearts-auth-url", s.mgmt.RequestCodeArtsToken)
 		mgmt.POST("/codearts-auth-callback", s.mgmt.PostCodeArtsAuthCallback)
+		mgmt.GET("/codearts-quota", s.mgmt.GetCodeArtsQuota)
 		mgmt.GET("/get-auth-status", s.mgmt.GetAuthStatus)
 		mgmt.DELETE("/oauth-session", s.mgmt.CancelAuthSession)
 	}

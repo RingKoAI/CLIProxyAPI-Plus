@@ -33,15 +33,66 @@ func TestGetCodeArtsModels(t *testing.T) {
 	if glm52.ContextLength != 202752 {
 		t.Errorf("GLM-5.2 context_length = %d, want 202752", glm52.ContextLength)
 	}
-	if glm52.MaxCompletionTokens != 131072 {
-		t.Errorf("GLM-5.2 max_completion_tokens = %d, want 131072", glm52.MaxCompletionTokens)
-	}
 	if glm52.Thinking == nil || len(glm52.Thinking.Levels) == 0 {
 		t.Error("GLM-5.2 should advertise thinking levels")
 	}
 
-	if _, ok := byID["Auto"]; !ok {
-		t.Errorf("Auto missing from the catalog: %v", keys(byID))
+	// The gateway rejects max_tokens above 65536, so every catalog entry must
+	// stay within the server-enforced ceiling regardless of the larger values
+	// the upstream catalog advertises.
+	for _, model := range models {
+		if model.MaxCompletionTokens > codeArtsMaxCatalogTokens {
+			t.Errorf("model %s declares max_completion_tokens %d, above the gateway ceiling %d",
+				model.ID, model.MaxCompletionTokens, codeArtsMaxCatalogTokens)
+		}
+	}
+
+	// Models captured live from the upstream agent-center/gateway-config lists.
+	for _, want := range []string{
+		"GLM-5.2",
+		"glm-5.2-sft-harmony",
+		"openpangu-2.0-pro",
+		"openpangu-2.0-flash",
+		"deepseek-v4-flash-0731",
+		"deepseek-v4-pro-0813",
+		"glm-5.3-flash",
+	} {
+		if _, ok := byID[want]; !ok {
+			t.Errorf("%s missing from the catalog: %v", want, keys(byID))
+		}
+	}
+
+	// The wire id and the display name differ for these models; the display name
+	// is what the desktop client shows, the id is what the gateway routes.
+	display := map[string]string{
+		"glm-5.2-sft-harmony": "GLM-5.2-ArkTS-SPARK",
+		"openpangu-2.0-pro":   "OpenPangu-2.0-Pro",
+	}
+	for id, want := range display {
+		model, ok := byID[id]
+		if !ok {
+			t.Errorf("%s missing", id)
+			continue
+		}
+		if model.DisplayName != want {
+			t.Errorf("%s display_name = %q, want %q", id, model.DisplayName, want)
+		}
+	}
+
+	// Qwen3-VL-235B is the multimodal entry; image input must be advertised or
+	// the aggregator would reject image attachments.
+	if qwen, ok := byID["Qwen3-VL-235B"]; !ok {
+		t.Errorf("Qwen3-VL-235B missing from the catalog: %v", keys(byID))
+	} else {
+		found := false
+		for _, modality := range qwen.SupportedInputModalities {
+			if modality == "image" {
+				found = true
+			}
+		}
+		if !found {
+			t.Errorf("Qwen3-VL-235B should accept image input: %v", qwen.SupportedInputModalities)
+		}
 	}
 }
 
@@ -100,6 +151,23 @@ func TestGetStaticModelDefinitionsByChannelCodeArts(t *testing.T) {
 func TestLookupStaticModelInfoFindsCodeArts(t *testing.T) {
 	if got := LookupStaticModelInfo("GLM-5.2"); got == nil || got.ID != "GLM-5.2" {
 		t.Fatalf("LookupStaticModelInfo(GLM-5.2) = %+v", got)
+	}
+	// The fallback list must stay aligned with the embedded catalog so a parse
+	// failure cannot silently drop models or reintroduce unsupported limits.
+	for _, model := range staticCodeArtsModels {
+		if model.MaxCompletionTokens != codeArtsMaxCatalogTokens {
+			t.Errorf("static %s max_completion_tokens = %d, want %d",
+				model.ID, model.MaxCompletionTokens, codeArtsMaxCatalogTokens)
+		}
+	}
+	byID := make(map[string]struct{}, len(staticCodeArtsModels))
+	for _, model := range staticCodeArtsModels {
+		byID[model.ID] = struct{}{}
+	}
+	for _, id := range []string{"GLM-5.2", "glm-5.2-sft-harmony", "openpangu-2.0-pro", "openpangu-2.0-flash", "Qwen3-VL-235B"} {
+		if _, ok := byID[id]; !ok {
+			t.Errorf("static fallback is missing %s", id)
+		}
 	}
 }
 

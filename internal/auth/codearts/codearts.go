@@ -87,6 +87,24 @@ const (
 	RefreshWindowSeconds = 300
 )
 
+// freeBenefitModelIDs are the limited-time free models (限时福利) served by the
+// developer gateway. They are listed dynamically by /api/v1/gateway/config, and
+// the fixed set below is used only to recognise them for request routing: these
+// ids are rejected with InferHub.002002009.404 unless the request carries the
+// maas_type=benefit header, so the id must be classifiable on the wire.
+var freeBenefitModelIDs = map[string]struct{}{
+	"deepseek-v4-flash-0731": {},
+	"deepseek-v4-pro-0813":   {},
+	"glm-5.3-flash":          {},
+}
+
+// IsFreeBenefitModel reports whether the model id is served from the
+// limited-time free pool and therefore needs benefit routing.
+func IsFreeBenefitModel(modelID string) bool {
+	_, ok := freeBenefitModelIDs[strings.ToLower(strings.TrimSpace(modelID))]
+	return ok
+}
+
 // TokenData is the temporary credential bundle produced by the OAuth exchange.
 type TokenData struct {
 	// AccessKey is the temporary Huawei Cloud access key id.
@@ -392,6 +410,93 @@ func (c *Client) GetUserInfo(ctx context.Context, accessKey, secretKey, security
 		return nil, fmt.Errorf("codearts: caller identity is empty")
 	}
 	return &UserInfo{UserID: userID, UserName: userName, DomainID: domainID}, nil
+}
+
+// TokenBalance is the credit balance of the signed-in account, returned by the
+// developer gateway token balance endpoint.
+type TokenBalance struct {
+	// Channel is the benefit channel ("codearts").
+	Channel string
+	// TotalQuota is the total credit quota granted to the account.
+	TotalQuota int64
+	// TotalBalance is the remaining credit balance.
+	TotalBalance int64
+	// UsedAmount is the credits consumed so far.
+	UsedAmount int64
+	// DailyTokenLimit is the daily token cap (0 means unlimited).
+	DailyTokenLimit int64
+	// DailyTokensUsed is the tokens consumed today.
+	DailyTokensUsed int64
+	// MonthlyTokenLimit is the monthly token cap (0 means unlimited).
+	MonthlyTokenLimit int64
+	// MonthlyTokensUsed is the tokens consumed this month.
+	MonthlyTokensUsed int64
+	// ExpireTime is the quota expiry timestamp in milliseconds (0 means none).
+	ExpireTime int64
+}
+
+// FetchTokenBalance queries the developer gateway for the account's credit
+// balance. It signs the request with the temporary AK/SK triple the same way
+// the inference endpoint does.
+func (c *Client) FetchTokenBalance(ctx context.Context, accessKey, secretKey, securityToken string) (*TokenBalance, error) {
+	endpoint := strings.TrimRight(c.benefitURL, "/") + "/api/v1/user/tokens/balance"
+	req, errReq := c.signedRequest(ctx, http.MethodGet, endpoint, nil, Credentials{
+		AccessKey:     accessKey,
+		SecretKey:     secretKey,
+		SecurityToken: securityToken,
+	}, map[string]string{"X-Language": "zh-cn"})
+	if errReq != nil {
+		return nil, errReq
+	}
+
+	resp, errDo := c.httpClient.Do(req)
+	if errDo != nil {
+		return nil, fmt.Errorf("codearts: token balance request failed: %w", errDo)
+	}
+	defer func() {
+		_ = resp.Body.Close()
+	}()
+	data, errRead := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	if errRead != nil {
+		return nil, fmt.Errorf("codearts: read token balance response: %w", errRead)
+	}
+	if resp.StatusCode >= 400 {
+		return nil, &Error{StatusCode: resp.StatusCode, Message: strings.TrimSpace(string(data))}
+	}
+
+	var payload struct {
+		ErrorCode string `json:"error_code"`
+		ErrorMsg  string `json:"error_msg"`
+		Result    struct {
+			Channel           string `json:"channel"`
+			TotalQuota        int64  `json:"total_quota"`
+			TotalBalance      int64  `json:"total_balance"`
+			UsedAmount        int64  `json:"used_amount"`
+			DailyTokenLimit   int64  `json:"daily_token_limit"`
+			DailyTokensUsed   int64  `json:"daily_tokens_used"`
+			MonthlyTokenLimit int64  `json:"monthly_token_limit"`
+			MonthlyTokensUsed int64  `json:"monthly_tokens_used"`
+			ExpireTime        int64  `json:"expire_time"`
+		} `json:"result"`
+	}
+	if errUnmarshal := json.Unmarshal(data, &payload); errUnmarshal != nil {
+		return nil, fmt.Errorf("codearts: invalid token balance response: %w", errUnmarshal)
+	}
+	if payload.ErrorCode != "" && payload.ErrorCode != "0000" {
+		return nil, &Error{StatusCode: resp.StatusCode, Code: payload.ErrorCode, Message: payload.ErrorMsg}
+	}
+
+	return &TokenBalance{
+		Channel:           payload.Result.Channel,
+		TotalQuota:        payload.Result.TotalQuota,
+		TotalBalance:      payload.Result.TotalBalance,
+		UsedAmount:        payload.Result.UsedAmount,
+		DailyTokenLimit:   payload.Result.DailyTokenLimit,
+		DailyTokensUsed:   payload.Result.DailyTokensUsed,
+		MonthlyTokenLimit: payload.Result.MonthlyTokenLimit,
+		MonthlyTokensUsed: payload.Result.MonthlyTokensUsed,
+		ExpireTime:        payload.Result.ExpireTime,
+	}, nil
 }
 
 // urnLeaf extracts the trailing account/user name from a principal URN.

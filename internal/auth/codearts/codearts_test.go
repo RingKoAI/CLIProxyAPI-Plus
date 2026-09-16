@@ -473,3 +473,41 @@ func TestNormalizeActivityType(t *testing.T) {
 		}
 	}
 }
+
+// TestIsFreeBenefitModel pins the free-model routing classification.
+//
+// The limited-time free models are rejected with InferHub.002002009.404 unless
+// the request carries maas_type=benefit, so this predicate gates a header that
+// decides whether those models work at all.
+func TestIsFreeBenefitModel(t *testing.T) {
+	benefit := []string{
+		"deepseek-v4-flash-0731",
+		"deepseek-v4-pro-0813",
+		"glm-5.3-flash",
+		"  glm-5.3-flash  ",
+		"GLM-5.3-Flash",
+	}
+	for _, id := range benefit {
+		if !IsFreeBenefitModel(id) {
+			t.Errorf("IsFreeBenefitModel(%q) = false, want true", id)
+		}
+	}
+	standard := []string{
+		"GLM-5.2",
+		"GLM-5.1",
+		"glm-5.2-sft-harmony",
+		"openpangu-2.0-pro",
+		"openpangu-2.0-flash",
+		"Qwen3-VL-235B",
+		// Serving the benefit header for a standard model is harmless but
+		// unnecessary, so unrelated ids must not be classified as benefit.
+		"deepseek-v4-pro",
+		"glm-5.2",
+		"",
+	}
+	for _, id := range standard {
+		if IsFreeBenefitModel(id) {
+			t.Errorf("IsFreeBenefitModel(%q) = true, want false", id)
+		}
+	}
+}

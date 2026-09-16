@@ -8,6 +8,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/tidwall/gjson"
+
 	codeartsauth "github.com/router-for-me/CLIProxyAPI/v7/internal/auth/codearts"
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/config"
 	cliproxyauth "github.com/router-for-me/CLIProxyAPI/v7/sdk/cliproxy/auth"
@@ -15,6 +17,19 @@ import (
 
 // CodeArtsSessionHeader carries the synthetic chat-session id upstream.
 const CodeArtsSessionHeader = "user-session-id"
+
+// CodeArtsBenefitHeader routes a request to the limited-time free model
+// pool (每日1000万免费AI算力).
+//
+// The models listed by /api/v1/gateway/config (deepseek-v4-*, glm-5.3-flash)
+// only exist behind this header: without it the gateway answers
+// InferHub.002002009.404 "The model is not registered". Sending it for a
+// standard model is harmless (it resolves to the same route), so it is applied
+// only when the request targets a configured free-benefit model.
+const CodeArtsBenefitHeader = "maas_type"
+
+// CodeArtsBenefitHeaderValue is the value that selects the benefit pool.
+const CodeArtsBenefitHeaderValue = "benefit"
 
 // codeArtsSigningRoundTripper signs every outbound CodeArts request with Huawei
 // Cloud SDK-HMAC-SHA256.
@@ -55,6 +70,14 @@ func (t *codeArtsSigningRoundTripper) RoundTrip(req *http.Request) (*http.Respon
 		req.GetBody = func() (io.ReadCloser, error) {
 			return io.NopCloser(bytes.NewReader(body)), nil
 		}
+	}
+
+	// Limited-time free models live behind a dedicated routing header. The
+	// model id is read from the body here so the executor does not need a
+	// second translation pass.
+	if modelID := gjson.GetBytes(body, "model").String(); modelID != "" &&
+		codeartsauth.IsFreeBenefitModel(modelID) {
+		req.Header.Set(CodeArtsBenefitHeader, CodeArtsBenefitHeaderValue)
 	}
 
 	// The Huawei Cloud signature replaces the bearer credential the

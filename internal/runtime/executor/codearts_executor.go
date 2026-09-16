@@ -24,6 +24,14 @@ import (
 const (
 	// codeArtsDefaultMaxTokens bounds the output when a model declares no limit.
 	codeArtsDefaultMaxTokens = 32000
+
+	// codeArtsMaxOutputTokens is the hard ceiling the gateway enforces on
+	// max_tokens. It is validated server-side (RANGE_VALIDATOR) and is
+	// independent of the per-model values advertised by the model catalog:
+	// every CodeArts model, including those advertising 131072 or 393216,
+	// rejects max_tokens > 65536 with HTTP 400. Requests above this ceiling
+	// must be clamped or they fail before reaching the model.
+	codeArtsMaxOutputTokens = 65536
 )
 
 // CodeArtsExecutor talks to the Huawei Cloud CodeArts (CodeArts Work) LLM
@@ -299,15 +307,21 @@ func applyCodeArtsOutgoingTransforms(_ context.Context, _ *cliproxyauth.Auth, ba
 	if len(translated) == 0 || !gjson.ValidBytes(translated) {
 		return translated
 	}
-	// The gateway requires a bounded output; fall back to the catalog/default.
-	if !gjson.GetBytes(translated, "max_tokens").Exists() {
-		limit := codeArtsDefaultMaxTokens
-		if info := registry.LookupModelInfo(baseModel, constant.CodeArts); info != nil && info.MaxCompletionTokens > 0 {
-			limit = info.MaxCompletionTokens
-		}
-		if updated, errSet := sjson.SetBytes(translated, "max_tokens", limit); errSet == nil {
-			translated = updated
-		}
+	// The gateway requires a bounded output. Honor the client's value when it is
+	// within the server ceiling, else fall back to the catalog/default. Any
+	// value above the ceiling is rejected outright, so it is always clamped.
+	limit := codeArtsDefaultMaxTokens
+	if info := registry.LookupModelInfo(baseModel, constant.CodeArts); info != nil && info.MaxCompletionTokens > 0 {
+		limit = info.MaxCompletionTokens
+	}
+	if requested := gjson.GetBytes(translated, "max_tokens"); requested.Exists() && requested.Int() > 0 {
+		limit = int(requested.Int())
+	}
+	if limit > codeArtsMaxOutputTokens {
+		limit = codeArtsMaxOutputTokens
+	}
+	if updated, errSet := sjson.SetBytes(translated, "max_tokens", limit); errSet == nil {
+		translated = updated
 	}
 
 	// The gateway streams tool-call deltas only in streaming mode, so mirror the

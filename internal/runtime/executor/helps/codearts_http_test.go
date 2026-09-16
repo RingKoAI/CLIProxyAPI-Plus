@@ -107,6 +107,68 @@ func TestNewCodeArtsHTTPClientSignsRequest(t *testing.T) {
 	}
 }
 
+// TestNewCodeArtsHTTPClientBenefitRouting pins that only the limited-time free
+// models receive the maas_type=benefit header.
+//
+// The gateway answers InferHub.002002009.404 "The model is not registered" for
+// these ids without the header, so misrouting them makes the models unusable;
+// conversely the header must not leak onto standard models.
+func TestNewCodeArtsHTTPClientBenefitRouting(t *testing.T) {
+	cases := []struct {
+		name    string
+		body    string
+		wantHdr string
+	}{
+		{name: "benefit deepseek flash", body: `{"model":"deepseek-v4-flash-0731"}`, wantHdr: CodeArtsBenefitHeaderValue},
+		{name: "benefit deepseek pro", body: `{"model":"deepseek-v4-pro-0813"}`, wantHdr: CodeArtsBenefitHeaderValue},
+		{name: "benefit glm flash", body: `{"model":"glm-5.3-flash"}`, wantHdr: CodeArtsBenefitHeaderValue},
+		{name: "benefit id case-insensitive", body: `{"model":"GLM-5.3-Flash"}`, wantHdr: CodeArtsBenefitHeaderValue},
+		{name: "standard model", body: `{"model":"GLM-5.2"}`, wantHdr: ""},
+		{name: "standard pangu", body: `{"model":"openpangu-2.0-pro"}`, wantHdr: ""},
+		{name: "no model field", body: `{"stream":true}`, wantHdr: ""},
+		{name: "empty body", body: ``, wantHdr: ""},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			var sawBenefit string
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				sawBenefit = r.Header.Get(CodeArtsBenefitHeader)
+				_, _ = w.Write([]byte(`{"ok":true}`))
+			}))
+			defer server.Close()
+
+			auth := &cliproxyauth.Auth{
+				ID: "codearts-benefit",
+				Attributes: map[string]string{
+					"api_key":        "AK_B",
+					"secret_key":     "SK_B",
+					"security_token": "ST_B",
+				},
+			}
+
+			client := NewCodeArtsHTTPClient(context.Background(), nil, auth, 0)
+			req, errReq := http.NewRequest(http.MethodPost, server.URL+"/api/v2/chat/completions", bytes.NewReader([]byte(tc.body)))
+			if errReq != nil {
+				t.Fatalf("new request: %v", errReq)
+			}
+			req.Header.Set("Content-Type", "application/json")
+
+			resp, errDo := client.Do(req)
+			if errDo != nil {
+				t.Fatalf("do: %v", errDo)
+			}
+			if errClose := resp.Body.Close(); errClose != nil {
+				t.Errorf("close body: %v", errClose)
+			}
+
+			if sawBenefit != tc.wantHdr {
+				t.Fatalf("%s header = %q, want %q", CodeArtsBenefitHeader, sawBenefit, tc.wantHdr)
+			}
+		})
+	}
+}
+
 // TestNewCodeArtsHTTPClientWithoutCredentialsPassesThrough pins that an auth
 // without a credential triple is not wrapped (no panic, no bogus signature).
 func TestNewCodeArtsHTTPClientWithoutCredentialsPassesThrough(t *testing.T) {
