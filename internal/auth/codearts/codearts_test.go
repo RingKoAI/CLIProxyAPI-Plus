@@ -374,10 +374,60 @@ func TestListActivitiesAndDailyCheckIn(t *testing.T) {
 	if !confirmed {
 		t.Fatal("the claim was not confirmed")
 	}
-	// confirm requires BOTH campaignId and userBenefitId; sending only
-	// userBenefitId fails upstream with PROMPTCENTER.00000001.
-	if confirmBody["campaignId"] != "1" || confirmBody["userBenefitId"] != "ub-1" {
+	// confirm mirrors the desktop client: the body carries ONLY userBenefitId,
+	// never campaignId.
+	if confirmBody["userBenefitId"] != "ub-1" || len(confirmBody) != 1 {
 		t.Fatalf("unexpected confirm body: %+v", confirmBody)
+	}
+	if result.ConfirmError != "" {
+		t.Fatalf("unexpected confirm error: %q", result.ConfirmError)
+	}
+}
+
+// TestConfirmFailureDoesNotFailCheckIn pins the best-effort semantics of
+// confirm: credits are granted by the claim, the desktop client ignores
+// confirm failures, and a failing confirm must neither fail the check-in nor
+// trigger the simple-benefit fallback (which would double-report the reward).
+func TestConfirmFailureDoesNotFailCheckIn(t *testing.T) {
+	confirmCalls := 0
+	fallbackCalls := 0
+	client, server := newTestClient(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case WelfareDeliveryPath:
+			_, _ = w.Write([]byte(`{"code":0,"data":{"items":[
+				{"campaignId":1,"type":"USER_LOGIN","title":"每日签到领1000 积分","status":"ELIGIBLE","claimable":true,"benefitAmount":1000,"extra":{"triggerEvent":"user.login"}}
+			]}}`))
+		case WelfareClaimPath:
+			_, _ = w.Write([]byte(`{"code":0,"data":{"id":42}}`))
+		case WelfareConfirmPath:
+			confirmCalls++
+			w.WriteHeader(http.StatusBadRequest)
+			_, _ = w.Write([]byte(`{"error_code":"HDN.1000","error_msg":"userBenefitId : unknown exception"}`))
+		case BenefitClaimPath:
+			fallbackCalls++
+			_, _ = w.Write([]byte(`{"error_code":"0000","result":{}}`))
+		}
+	}))
+	defer server.Close()
+
+	result, err := client.DailyCheckIn(context.Background(), Credentials{AccessKey: "AK", SecretKey: "SK"})
+	if err != nil {
+		t.Fatalf("check-in must succeed even when confirm fails: %v", err)
+	}
+	if !result.Claimed || result.CampaignID != "1" {
+		t.Fatalf("unexpected result: %+v", result)
+	}
+	if result.UserBenefitID != "42" {
+		t.Fatalf("numeric claim id decoded as %q, want \"42\"", result.UserBenefitID)
+	}
+	if result.ConfirmError == "" {
+		t.Fatal("confirm failure should be surfaced as ConfirmError")
+	}
+	if confirmCalls != 1 {
+		t.Fatalf("confirm calls = %d, want 1", confirmCalls)
+	}
+	if fallbackCalls != 0 {
+		t.Fatal("confirm failure must not trigger the simple-benefit fallback")
 	}
 }
 

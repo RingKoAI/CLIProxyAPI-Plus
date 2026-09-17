@@ -12,9 +12,13 @@ CodeArts（华为云 CodeArts Work 桌面端）每日签到脚本
   - 执行签到:  POST {snap}/v1/ops/claim
        body {"campaignId": "...", "idempotentKey": "claim_<cid>_<ms>", "channel": "DESKTOP"}
   - 确认领取:  POST {snap}/v1/ops/confirm   body {"userBenefitId": "..."}
+    注意：confirm 与官方客户端对齐只传 userBenefitId，且是尽力而为——积分在 claim
+    成功时即已入账（实测 2026-09-17：confirm 返回 HDN.1000 但积分已到账、
+    活动状态已置 CLAIMED；官方渲染层也不检查 confirm 返回值）。
   请求头：Agent-Type: PromptCenter, X-Language: zh-cn, Content-Type: application/json
   判定：code == 0 || code == 200 || data 存在
-  data.items[] 字段：campaignId|campaign_id, type(daily_claim|invite_user|...),
+  data.items[] 字段：campaignId|campaign_id（数字！）, type(USER_LOGIN|...),
+                     extra.triggerEvent(user.login = 每日签到),
                      benefitAmount, claimable, status(ELIGIBLE|CLAIMED|CONFIRMED|CONSUMED)
 
 ② 简单签到（benefitApiUrl = opengw.developer.huaweicloud.com）
@@ -46,7 +50,6 @@ import hashlib
 import hmac
 import json
 import os
-import sys
 import time
 from pathlib import Path
 from urllib.parse import quote, urlsplit
@@ -152,6 +155,10 @@ def _http(method: str, url: str, creds: dict, extra: dict[str, str],
     import urllib.error
     import urllib.request
 
+    parts = urlsplit(url)
+    if parts.scheme not in ("http", "https"):
+        raise RuntimeError(f"拒绝非 http(s) 的 URL scheme: {parts.scheme!r}")
+
     headers_to_sign = dict(extra)
     if creds.get("security_token"):
         headers_to_sign["X-Security-Token"] = creds["security_token"]
@@ -183,7 +190,12 @@ def _http(method: str, url: str, creds: dict, extra: dict[str, str],
 # ---------------------------------------------------------------- 凭证
 def load_credential(auth_file: Path) -> dict:
     """从 CLIProxyAPI codearts auth 文件读取签名三元组。"""
-    data = json.loads(auth_file.read_text(encoding="utf-8"))
+    try:
+        data = json.loads(auth_file.read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        raise SystemExit(f"凭证文件不存在: {auth_file}") from None
+    except json.JSONDecodeError as e:
+        raise SystemExit(f"凭证文件不是合法 JSON: {auth_file}: {e}") from None
     ak = data.get("access_key") or data.get("api_key")
     sk = data.get("secret_key")
     st = data.get("security_token") or ""
@@ -299,17 +311,15 @@ def claim_activity(snap: str, creds: dict, campaign_id: str, timeout: int) -> di
     return {"user_benefit_id": str(data.get("id") or data.get("userBenefitId") or "")}
 
 
-def confirm_activity(snap: str, creds: dict, campaign_id: str, user_benefit_id: str,
-                     timeout: int) -> None:
-    """确认领取。实测 confirm 同时需要 campaignId 和 userBenefitId：
-    缺 campaignId 报 「campaignId : 参数无效」，userBenefitId 不对报 「userBenefitId : unknown exception」。
-    注意错误返回用 error_code（PROMPTCENTER.xxx / HDN.xxx），与 claim 的 code 字段不同。"""
+def confirm_activity(snap: str, creds: dict, user_benefit_id: str, timeout: int) -> None:
+    """确认领取（尽力而为）。与官方客户端对齐：body 只传 userBenefitId。
+    积分在 claim 成功时已入账，confirm 失败不影响签到结果（官方渲染层也不检查
+    confirm 的返回值）。错误返回用 error_code/error_msg，与 claim 的 code/message 不同。"""
     url = f"{snap}{WELFARE_CONFIRM_PATH}"
-    body = json.dumps({"campaignId": campaign_id, "userBenefitId": user_benefit_id}).encode("utf-8")
+    body = json.dumps({"userBenefitId": user_benefit_id}).encode("utf-8")
     r = _http("POST", url, creds, {"Agent-Type": AGENT_TYPE, "X-Language": "zh-cn"},
               body=body, timeout=timeout)
     p = r["payload"]
-    # confirm 的判定：claim 系返回 code，部分返回 error_code/error_msg
     code = p.get("code")
     ec = p.get("error_code")
     if r["status"] == 200 and code in (None, 0, 200) and ec in (None, "0000"):
@@ -386,16 +396,21 @@ def run_one(args: argparse.Namespace, creds: dict) -> int:
               f"（{daily['benefit_amount']} 积分）")
         try:
             claimed = claim_activity(snap, creds, daily["campaign_id"], args.timeout)
+        except Exception as e:
+            print(f"[!] 福利体系签到失败，尝试简单签到兜底: {e}")
+        else:
+            # claim 成功即签到成功（积分已入账）；confirm 仅尽力而为。
             ubi = claimed.get("user_benefit_id")
             if ubi:
-                confirm_activity(snap, creds, daily["campaign_id"], ubi, args.timeout)
+                try:
+                    confirm_activity(snap, creds, ubi, args.timeout)
+                except Exception as e:
+                    print(f"[!] 确认领取(confirm)未通过（不影响签到结果）: {e}")
             else:
-                print("[!] claim 未返回 userBenefitId，跳过 confirm（可能已直接入账）。")
+                print("[i] claim 未返回 userBenefitId，跳过 confirm。")
             print(f"[✓] 签到成功，领取 {daily['benefit_amount']} 积分。")
             _show_balance(benefit, creds, args.timeout)
             return 0
-        except Exception as e:
-            print(f"[!] 福利体系签到失败，尝试简单签到兜底: {e}")
     elif activities:
         # 有活动但无可领的每日签到 => 已签到
         print("[i] 今日已签到（或无可领的每日活动）。")

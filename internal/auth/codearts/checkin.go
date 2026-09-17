@@ -122,6 +122,10 @@ type CheckInResult struct {
 	BenefitAmount int
 	// UserBenefitID is the identifier returned by the claim call.
 	UserBenefitID string
+	// ConfirmError is set when the best-effort confirm call failed after a
+	// successful claim. Credits are already granted at claim time, so this is
+	// informational only.
+	ConfirmError string
 }
 
 // welfareDeliveryResponse mirrors GET /v1/ops/delivery?channel=DESKTOP.
@@ -230,10 +234,13 @@ func (c *Client) ClaimActivity(ctx context.Context, creds Credentials, campaignI
 		UserBenefitID: firstNonEmpty(claimed.Data.ID.String(), claimed.Data.UserBenefitID.String()),
 	}
 	if result.UserBenefitID != "" {
-		if errConfirm := c.confirmActivity(ctx, creds, campaignID, result.UserBenefitID); errConfirm != nil {
-			// A failed confirmation leaves the claim pending; surface it so the
-			// caller can retry rather than silently reporting success.
-			return result, fmt.Errorf("codearts: claim succeeded but confirm failed: %w", errConfirm)
+		if errConfirm := c.confirmActivity(ctx, creds, result.UserBenefitID); errConfirm != nil {
+			// Best effort only: credits are granted by the claim itself, and the
+			// desktop client ignores confirm failures entirely (the renderer
+			// awaits confirmWelfare without checking its result). A confirm
+			// failure must not fail the check-in nor trigger the simple-benefit
+			// fallback, which would double-report the reward.
+			result.ConfirmError = errConfirm.Error()
 		}
 	}
 	return result, nil
@@ -241,13 +248,13 @@ func (c *Client) ClaimActivity(ctx context.Context, creds Credentials, campaignI
 
 // confirmActivity finalizes a claim.
 //
-// The confirm endpoint requires BOTH campaignId and userBenefitId. Omitting
-// campaignId yields PROMPTCENTER.00000001 ("campaignId : 参数无效"), and a wrong
-// userBenefitId yields HDN.1000. Note the error envelope here is
-// error_code/error_msg (not the code/message used by claim/delivery).
-func (c *Client) confirmActivity(ctx context.Context, creds Credentials, campaignID, userBenefitID string) error {
+// Mirrors the desktop client exactly: the body carries ONLY userBenefitId —
+// sending campaignId as well is wrong (the official client never does it).
+// Failures (e.g. HDN.1000 "userBenefitId : unknown exception") are non-fatal;
+// the error envelope here is error_code/error_msg, unlike claim/delivery's
+// code/message.
+func (c *Client) confirmActivity(ctx context.Context, creds Credentials, userBenefitID string) error {
 	payload, errMarshal := json.Marshal(map[string]any{
-		"campaignId":    campaignID,
 		"userBenefitId": userBenefitID,
 	})
 	if errMarshal != nil {
@@ -279,7 +286,7 @@ func (c *Client) confirmActivity(ctx context.Context, creds Credentials, campaig
 }
 
 // DailyCheckIn performs the daily check-in: it lists the activities, claims the
-// first claimable daily_claim activity and confirms it.
+// first claimable daily check-in activity and confirms it (best effort).
 //
 // It falls back to the developer-gateway benefit endpoint when the welfare
 // activity list is unavailable, mirroring the desktop client.
