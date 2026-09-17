@@ -95,6 +95,8 @@ func (s *ConfigSynthesizer) Synthesize(ctx *SynthesisContext) ([]*coreauth.Auth,
 	out = append(out, s.synthesizeCodeArtsKeys(ctx)...)
 	// TRAE SOLO CN desktop credentials
 	out = append(out, s.synthesizeTraeKeys(ctx)...)
+	// Meta API Keys
+	out = append(out, s.synthesizeMetaKeys(ctx)...)
 	// OpenAI-compat
 	out = append(out, s.synthesizeOpenAICompat(ctx)...)
 	// Vertex-compat
@@ -588,6 +590,11 @@ func (s *ConfigSynthesizer) synthesizeTraeKeys(ctx *SynthesisContext) []*coreaut
 		out = append(out, a)
 	}
 	return out
+}
+
+// synthesizeMetaKeys creates Auth entries for Meta API keys.
+func (s *ConfigSynthesizer) synthesizeMetaKeys(ctx *SynthesisContext) []*coreauth.Auth {
+	return s.synthesizeCodexStyleKeys(ctx, ctx.Config.MetaKey, "meta")
 }
 
 func (s *ConfigSynthesizer) synthesizeCodexStyleKeys(ctx *SynthesisContext, entries []config.CodexKey, provider string) []*coreauth.Auth {

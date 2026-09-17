@@ -163,6 +163,10 @@ func (s *Server) registerManagementRoutes() {
 		mgmt.PUT("/xiaohuanxiong-api-key", s.mgmt.PutXiaohuanxiongKeys)
 		mgmt.PATCH("/xiaohuanxiong-api-key", s.mgmt.PatchXiaohuanxiongKey)
 		mgmt.DELETE("/xiaohuanxiong-api-key", s.mgmt.DeleteXiaohuanxiongKey)
+		mgmt.GET("/meta-api-key", s.mgmt.GetMetaKeys)
+		mgmt.PUT("/meta-api-key", s.mgmt.PutMetaKeys)
+		mgmt.PATCH("/meta-api-key", s.mgmt.PatchMetaKey)
+		mgmt.DELETE("/meta-api-key", s.mgmt.DeleteMetaKey)
 
 		mgmt.GET("/openai-compatibility", s.mgmt.GetOpenAICompat)
 		mgmt.PUT("/openai-compatibility", s.mgmt.PutOpenAICompat)
@@ -216,6 +220,7 @@ func (s *Server) registerManagementRoutes() {
 		mgmt.GET("/codearts-auth-url", s.mgmt.RequestCodeArtsToken)
 		mgmt.POST("/codearts-auth-callback", s.mgmt.PostCodeArtsAuthCallback)
 		mgmt.GET("/codearts-quota", s.mgmt.GetCodeArtsQuota)
+		mgmt.GET("/meta-auth-url", s.mgmt.RequestMetaToken)
 		mgmt.GET("/get-auth-status", s.mgmt.GetAuthStatus)
 		mgmt.DELETE("/oauth-session", s.mgmt.CancelAuthSession)
 	}

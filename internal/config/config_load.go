@@ -188,6 +188,8 @@ func LoadConfigOptional(configFile string, optional bool) (*Config, error) {
 
 	// Sanitize Trae keys: drop entries without an access token.
 	cfg.SanitizeTraeKeys()
+	// Sanitize Meta keys.
+	cfg.SanitizeMetaKeys()
 
 	// Sanitize Codex header defaults.
 	cfg.SanitizeCodexHeaderDefaults()

@@ -25,6 +25,7 @@ func newDefaultAuthManager() *sdkAuth.Manager {
 		sdkAuth.NewCodeBuddyAIAuthenticator(),
 		sdkAuth.NewXAIAuthenticator(),
 		sdkAuth.NewDevinAuthenticator(),
+		sdkAuth.NewMetaAuthenticator(),
 	)
 }
 

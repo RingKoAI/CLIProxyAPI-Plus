@@ -40,6 +40,7 @@ type staticModelsJSON struct {
 	XAI         []*ModelInfo `json:"xai"`
 	Devin       []*ModelInfo `json:"devin"`
 	Trae        []*ModelInfo `json:"trae"`
+	Meta        []*ModelInfo `json:"meta"`
 }
 
 // GetClaudeModels returns the standard Claude model definitions.
@@ -507,6 +508,8 @@ func cloneModelInfos(models []*ModelInfo) []*ModelInfo {
 //   - xai
 //   - xiaohuanxiong
 //   - codearts
+//   - devin
+//   - meta
 func GetStaticModelDefinitionsByChannel(channel string) []*ModelInfo {
 	key := strings.ToLower(strings.TrimSpace(channel))
 	switch key {
@@ -540,6 +543,8 @@ func GetStaticModelDefinitionsByChannel(channel string) []*ModelInfo {
 		return GetXAIModels()
 	case "devin":
 		return GetDevinModels()
+	case "meta", "muse":
+		return GetMetaModels()
 	default:
 		return nil
 	}
@@ -558,6 +563,11 @@ func LookupStaticModelInfoByChannel(modelID, channel string) *ModelInfo {
 		}
 	}
 	return nil
+}
+
+// GetMetaModels returns the standard Meta Muse model definitions.
+func GetMetaModels() []*ModelInfo {
+	return cloneModelInfos(getModels().Meta)
 }
 
 // LookupStaticModelInfo searches all static model definitions for a model by ID.
@@ -582,6 +592,7 @@ func LookupStaticModelInfo(modelID string) *ModelInfo {
 		staticDevinModels,
 		GetXiaohuanxiongModels(),
 		GetCodeArtsModels(),
+		data.Meta,
 	}
 	for _, models := range allModels {
 		for _, m := range models {

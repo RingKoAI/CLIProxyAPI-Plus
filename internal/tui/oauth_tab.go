@@ -29,6 +29,7 @@ var oauthProviders = []oauthProvider{
 	{"xAI", "xai-auth-url", "⬛", true},
 	{"Xiaohuanxiong (Raccoon)", "xiaohuanxiong-auth-url", "🦝", false},
 	{"CodeArts (Huawei)", "codearts-auth-url", "🟥", false},
+	{"Meta", "meta-auth-url", "🔵", true},
 }
 
 // oauthTabModel handles OAuth login flows.
@@ -370,6 +371,8 @@ func (m oauthTabModel) submitCallback(callbackURL string) tea.Cmd {
 					providerKey = "xiaohuanxiong"
 				case "codearts-auth-url":
 					providerKey = "codearts"
+				case "meta-auth-url":
+					providerKey = "meta"
 				}
 				break
 			}
